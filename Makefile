@@ -103,6 +103,10 @@ sign: all
 	    $(DRIVER_BUNDLE)
 	codesign --force --options runtime \
 	    --sign "$(DEVID)" \
+	    --identifier $(BUNDLE_ID) \
+	    $(GUI_BUNDLE)/Contents/Resources/VirtualMic.driver
+	codesign --force --options runtime \
+	    --sign "$(DEVID)" \
 	    --identifier $(GUI_BUNDLE_ID) \
 	    --entitlements App/entitlements.plist \
 	    $(GUI_BUNDLE)
