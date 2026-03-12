@@ -53,17 +53,19 @@ jobs:
             --team-id "$APPLE_TEAM_ID" \
             --wait 2>&1 | tee /tmp/notarize.log
           RESULT=$?
-          # Extract submission ID and fetch log on failure
           SUBMISSION_ID=$(grep -o '[0-9a-f\-]\{36\}' /tmp/notarize.log | head -1)
-          if [ $RESULT -ne 0 ] && [ -n "$SUBMISSION_ID" ]; then
-            echo "::warning::Notarization failed. Fetching log..."
-            xcrun notarytool log "$SUBMISSION_ID" \
-              --apple-id "$APPLE_ID" \
-              --password "$APPLE_APP_PASSWORD" \
-              --team-id "$APPLE_TEAM_ID" \
-              /tmp/notarize-log.json 2>/dev/null
-            cat /tmp/notarize-log.json 2>/dev/null || echo "Could not fetch log"
-            exit $RESULT
+          # Check for Invalid status or non-zero exit
+          if [ $RESULT -ne 0 ] || grep -q "status: Invalid" /tmp/notarize.log; then
+            echo "::error::Notarization failed. Fetching log..."
+            if [ -n "$SUBMISSION_ID" ]; then
+              xcrun notarytool log "$SUBMISSION_ID" \
+                --apple-id "$APPLE_ID" \
+                --password "$APPLE_APP_PASSWORD" \
+                --team-id "$APPLE_TEAM_ID" \
+                /tmp/notarize-log.json 2>/dev/null
+              cat /tmp/notarize-log.json 2>/dev/null || echo "Could not fetch log"
+            fi
+            exit 1
           fi
           xcrun stapler staple build/VirtualMic-*.pkg
 
