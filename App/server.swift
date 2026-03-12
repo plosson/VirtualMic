@@ -10,6 +10,7 @@ struct AppConfig: Codable {
     var selectedDevice: String?
     var port: UInt16
     var soundsDir: String
+    var injectVolume: Float?
 
     static let defaultPath = NSHomeDirectory() + "/.virtualmicapp.json"
     static let defaultSoundsDir = NSHomeDirectory() + "/VirtualMicSounds"
@@ -215,6 +216,9 @@ class HTTPServer {
             let file = query["file"] ?? ""
             return handlePlay(file: file, body: body)
 
+        case ("POST", "/api/volume"):
+            return handleSetVolume(body: body)
+
         default:
             return .json(["error": "Not found"], status: 404)
         }
@@ -276,7 +280,8 @@ class HTTPServer {
         let status: [String: Any] = [
             "proxy": [
                 "running": proxy != nil,
-                "device": proxyDeviceName as Any? ?? NSNull()
+                "device": proxyDeviceName as Any? ?? NSNull(),
+                "injectVolume": (proxy?.injectVolume ?? config.injectVolume ?? 1.0) as Float
             ],
             "mainRing": [
                 "fillPercent": mainRing.fillPercent,
@@ -354,6 +359,7 @@ class HTTPServer {
 
         let newProxy = MicProxy(deviceID: device.id, mainRing: mainRing, injectRing: injectRing)
         do {
+            newProxy.injectVolume = config.injectVolume ?? 1.0
             try newProxy.start()
             proxy = newProxy
             proxyDeviceName = device.name
@@ -418,6 +424,21 @@ class HTTPServer {
         }
 
         return .json(["ok": true, "file": filename])
+    }
+
+    private func handleSetVolume(body: String?) -> HTTPResponse {
+        guard let body = body, let data = body.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let vol = obj["volume"] as? Double else {
+            return .json(["error": "Missing 'volume' (0.0-1.0)"], status: 400)
+        }
+        let clamped = Float(max(0.0, min(1.0, vol)))
+        proxy?.injectVolume = clamped
+        config.injectVolume = clamped
+        config.save()
+        print("[server] Volume set to \(clamped)")
+        fflush(stdout)
+        return .json(["ok": true, "volume": clamped])
     }
 }
 
@@ -514,6 +535,18 @@ let indexHTML = """
     <div style="font-size: 13px; color: #888; margin-bottom: 4px; margin-top: 12px;">Inject</div>
     <div class="meter"><div class="meter-fill" id="inject-meter" style="width:0%"></div></div>
     <div class="meter-label"><span id="inject-pct">0%</span><span id="inject-samples">0 samples</span></div>
+  </div>
+
+  <!-- Volume -->
+  <div class="card">
+    <h2>Inject Volume</h2>
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <span style="font-size: 13px; color: #888;">0%</span>
+      <input type="range" id="volume-slider" min="0" max="100" value="100"
+             style="flex: 1; accent-color: #5b6abf;"
+             oninput="updateVolumeLabel(this.value)" onchange="setVolume(this.value)">
+      <span id="volume-label" style="font-size: 13px; color: #ccc; min-width: 36px;">100%</span>
+    </div>
   </div>
 
   <!-- Sounds -->
@@ -664,7 +697,22 @@ async function pollStatus() {
     document.getElementById('inject-meter').style.width = (ir.fillPercent || 0) + '%';
     document.getElementById('inject-pct').textContent = (ir.fillPercent || 0) + '%';
     document.getElementById('inject-samples').textContent = (ir.availableSamples || 0).toLocaleString() + ' samples';
+    // Sync volume slider (only if user is not actively dragging)
+    if (document.activeElement?.id !== 'volume-slider') {
+      const vol = Math.round((p.injectVolume ?? 1.0) * 100);
+      document.getElementById('volume-slider').value = vol;
+      document.getElementById('volume-label').textContent = vol + '%';
+    }
   } catch (e) {}
+}
+
+function updateVolumeLabel(val) {
+  document.getElementById('volume-label').textContent = val + '%';
+}
+
+async function setVolume(val) {
+  const v = parseInt(val) / 100;
+  await api('POST', '/api/volume', { volume: v });
 }
 
 async function saveConfig() {

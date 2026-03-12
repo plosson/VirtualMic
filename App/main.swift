@@ -104,6 +104,7 @@ class SharedRingBuffer {
     }
 
     /// Non-blocking write: drops samples if buffer is full. Safe for real-time audio threads.
+    /// Writes whole stereo frames only to prevent channel misalignment.
     func tryWrite(_ samples: UnsafePointer<Float>, count: Int) -> Int {
         let cap = capacity
         let wp = header.pointee.writePos
@@ -111,7 +112,10 @@ class SharedRingBuffer {
         let avail = cap - Int(wp - rp)
         if avail <= 0 { return 0 }
 
-        let chunk = min(avail, count)
+        // Round down to whole stereo frames to prevent L/R misalignment
+        let ch = Int(NUM_CHANNELS)
+        let chunk = (min(avail, count) / ch) * ch
+        if chunk <= 0 { return 0 }
         for i in 0..<chunk {
             let idx = Int((wp + UInt64(i)) % UInt64(cap))
             data[idx] = samples[i]
@@ -318,6 +322,9 @@ class MicProxy {
     let deviceID: AudioDeviceID
     let mainRing: SharedRingBuffer
     let injectRing: SharedRingBuffer
+
+    /// Volume for injected audio (0.0 = silent, 1.0 = full). Safe to set from any thread.
+    var injectVolume: Float = 1.0
 
     var audioUnit: AudioComponentInstance?
     private var outputUnit: AudioComponentInstance?  // for playing inject audio to speakers
@@ -552,20 +559,28 @@ private func inputCallback(
                                  inBusNumber, inNumberFrames, &bufferList)
     if status != noErr { return status }
 
+    // Mono mic fix: duplicate left channel into right channel
+    let frames = Int(inNumberFrames)
+    for f in 0..<frames {
+        captureBuffer[f * 2 + 1] = captureBuffer[f * 2]
+    }
+
     // Read inject samples (non-blocking)
     let injectBuffer = UnsafeMutablePointer<Float>.allocate(capacity: numSamples)
     defer { injectBuffer.deallocate() }
     let injectCount = proxy.injectRing.read(into: injectBuffer, maxSamples: numSamples)
 
-    // Mix: add inject audio on top of mic audio
+    // Mix: add inject audio on top of mic audio (with volume control)
     if injectCount > 0 {
+        let vol = proxy.injectVolume
         for i in 0..<injectCount {
+            injectBuffer[i] *= vol
             captureBuffer[i] = captureBuffer[i] + injectBuffer[i]
             // Clamp to prevent clipping
             if captureBuffer[i] > 1.0 { captureBuffer[i] = 1.0 }
             if captureBuffer[i] < -1.0 { captureBuffer[i] = -1.0 }
         }
-        // Enqueue inject audio for speaker playback
+        // Enqueue volume-adjusted inject audio for speaker playback
         proxy.enqueueSpeakerSamples(injectBuffer, count: injectCount)
     }
 
@@ -652,6 +667,9 @@ func main() throws {
 
         let mainRing   = try SharedRingBuffer(name: SHM_NAME)
         let injectRing = try SharedRingBuffer(name: SHM_INJECT_NAME)
+        // Reset ring buffers on startup to avoid stale state from crashes
+        mainRing.clear()
+        injectRing.clear()
 
         let server = HTTPServer(port: config.port, config: config, mainRing: mainRing, injectRing: injectRing)
         try server.start()
@@ -659,6 +677,7 @@ func main() throws {
         // Auto-start proxy if a device was previously saved
         if let savedDevice = config.selectedDevice, let device = findDevice(matching: savedDevice) {
             let proxy = MicProxy(deviceID: device.id, mainRing: mainRing, injectRing: injectRing)
+            proxy.injectVolume = config.injectVolume ?? 1.0
             try proxy.start()
             server.proxy = proxy
             server.proxyDeviceName = device.name
