@@ -35,7 +35,8 @@ struct ContentView: View {
                     Group {
                         switch selectedTab {
                         case 0: soundsTab
-                        case 1: settingsTab
+                        case 1: dashcamTab
+                        case 2: settingsTab
                         default: soundsTab
                         }
                     }
@@ -161,7 +162,8 @@ struct ContentView: View {
     private var tabBar: some View {
         HStack(spacing: 0) {
             tabButton("Sounds", icon: "music.note.list", index: 0)
-            tabButton("Settings", icon: "gearshape.fill", index: 1)
+            tabButton("Dashcam", icon: "record.circle", index: 1)
+            tabButton("Settings", icon: "gearshape.fill", index: 2)
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
@@ -332,6 +334,184 @@ struct ContentView: View {
             )
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Dashcam Tab
+
+    private var dashcamTab: some View {
+        VStack(spacing: 16) {
+            // Output device selector + start/stop
+            card {
+                VStack(alignment: .leading, spacing: 12) {
+                    cardTitle("Speaker Proxy", icon: "speaker.wave.2.fill")
+                    Text("Route system audio through VirtualSpeaker to a real output device, recording a rolling buffer for instant replay.")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.dimText)
+
+                    HStack(spacing: 8) {
+                        if app.speakerProxyRunning {
+                            Button {
+                                app.stopSpeakerProxy()
+                                showToast("Speaker proxy stopped")
+                            } label: {
+                                Image(systemName: "stop.fill")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.white)
+                                    .frame(width: 28, height: 28)
+                                    .background(Color.red.opacity(0.8))
+                                    .cornerRadius(6)
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            Button {
+                                do {
+                                    try app.startSpeakerProxy(deviceName: app.selectedOutputDevice)
+                                    showToast("Speaker proxy started")
+                                } catch {
+                                    showToast("Error: \(error.localizedDescription)")
+                                }
+                            } label: {
+                                Image(systemName: "play.fill")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(app.selectedOutputDevice.isEmpty ? Theme.dimText : Theme.bg)
+                                    .frame(width: 28, height: 28)
+                                    .background(app.selectedOutputDevice.isEmpty ? Color.white.opacity(0.05) : Theme.accent)
+                                    .cornerRadius(6)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(app.selectedOutputDevice.isEmpty)
+                        }
+
+                        Menu {
+                            Button("-- Select output device --") { app.selectedOutputDevice = "" }
+                            Divider()
+                            ForEach(app.outputDevices) { dev in
+                                Button(dev.name) {
+                                    app.selectedOutputDevice = dev.name
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "speaker.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(Theme.purple)
+                                Text(app.selectedOutputDevice.isEmpty ? "Select output device" : app.selectedOutputDevice)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(app.selectedOutputDevice.isEmpty ? Theme.dimText : Theme.bodyText)
+                                    .lineLimit(1)
+                                Spacer()
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.system(size: 8))
+                                    .foregroundColor(Theme.dimText)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(Color.white.opacity(0.04))
+                            .cornerRadius(6)
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.cardBorder, lineWidth: 1))
+                        }
+                        .disabled(app.speakerProxyRunning)
+                    }
+                }
+            }
+
+            // Buffer duration + signal meter
+            HStack(alignment: .top, spacing: 12) {
+                card {
+                    VStack(alignment: .leading, spacing: 10) {
+                        cardTitle("Buffer Duration", icon: "clock.fill")
+                        HStack(spacing: 10) {
+                            Text("\(Int(app.dashcamBufferSeconds))s")
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundColor(Theme.bodyText)
+                                .frame(width: 30, alignment: .trailing)
+                            Slider(value: $app.dashcamBufferSeconds, in: 1...30, step: 1) { editing in
+                                if !editing { app.setDashcamBufferSeconds(app.dashcamBufferSeconds) }
+                            }
+                            .tint(Theme.accent)
+                        }
+                        Text("Rolling buffer of the last \(Int(app.dashcamBufferSeconds)) seconds of audio. Changing restarts the proxy.")
+                            .font(.system(size: 10))
+                            .foregroundColor(Theme.dimText)
+                    }
+                }
+
+                card {
+                    VStack(alignment: .leading, spacing: 10) {
+                        cardTitle("Signal Level", icon: "waveform")
+                        levelMeter(label: "Speaker Output", level: app.speakerPeakLevel, color: Theme.purple)
+                        HStack {
+                            Circle()
+                                .fill(app.speakerProxyRunning ? Theme.accent : Color.red)
+                                .frame(width: 8, height: 8)
+                            Text(app.speakerProxyRunning ? "Monitoring" : "Inactive")
+                                .font(.system(size: 11))
+                                .foregroundColor(Theme.dimText)
+                            Spacer()
+                        }
+                    }
+                }
+            }
+
+            // Snapshot button
+            card {
+                VStack(spacing: 14) {
+                    Button {
+                        if let url = app.saveDashcamSnapshot() {
+                            showToast("Saved: \(url.lastPathComponent)")
+                        } else {
+                            showToast("Snapshot failed — is speaker proxy running?")
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "camera.fill")
+                                .font(.system(size: 14))
+                            Text("Save Snapshot")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundColor(app.speakerProxyRunning ? Theme.bg : Theme.dimText)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(app.speakerProxyRunning ? Theme.accent : Color.white.opacity(0.05))
+                        .cornerRadius(10)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!app.speakerProxyRunning)
+
+                    if let url = app.lastSnapshotURL {
+                        HStack(spacing: 8) {
+                            Image(systemName: "doc.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(Theme.accent)
+                            Text(url.lastPathComponent)
+                                .font(.system(size: 11))
+                                .foregroundColor(Theme.bodyText)
+                                .lineLimit(1)
+                            Spacer()
+                            Button {
+                                NSWorkspace.shared.activateFileViewerSelecting([url])
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "folder.fill")
+                                    Text("Show")
+                                }
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(Theme.accent)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(10)
+                        .background(Theme.accent.opacity(0.06))
+                        .cornerRadius(8)
+                    }
+
+                    Text("Captures the last \(Int(app.dashcamBufferSeconds)) seconds of audio passing through VirtualSpeaker.")
+                        .font(.system(size: 10))
+                        .foregroundColor(Theme.dimText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
     }
 
     // MARK: - Settings Tab
