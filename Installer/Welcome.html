@@ -3,13 +3,14 @@
 <head><meta charset="UTF-8"/></head>
 <body style="font-family: -apple-system; font-size: 13px; padding: 10px;">
 <h2>VirtualMic Audio Driver</h2>
-<p>This installer will add a <strong>VirtualMic</strong> virtual microphone to your Mac.</p>
-<p>After installation:</p>
+<p>This installer will add a <strong>VirtualMic</strong> virtual microphone to your Mac along with a companion app.</p>
+<p>What gets installed:</p>
 <ul>
-  <li>Open <b>System Settings → Sound → Input</b> — you'll see <em>VirtualMic</em> listed.</li>
-  <li>Select it as your microphone in any app (Zoom, Discord, FaceTime …).</li>
-  <li>Use the <code>VirtualMicCli inject audio.mp3</code> command to play audio through it.</li>
+  <li><strong>VirtualMic driver</strong> — a virtual microphone input device</li>
+  <li><strong>VirtualMic.app</strong> — GUI app for managing the proxy, playing sounds, and settings</li>
+  <li><strong>VirtualMicCli</strong> — command-line tool for scripting and automation</li>
 </ul>
-<p>The driver runs entirely in user space. No kernel extension is installed. No System Integrity Protection changes are required.</p>
+<p>After installation, open <b>VirtualMic</b> from your Applications folder and select a real microphone to proxy through the virtual device.</p>
+<p>The driver runs entirely in user space. No kernel extension is installed.</p>
 </body>
 </html>

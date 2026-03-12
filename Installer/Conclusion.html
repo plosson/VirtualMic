@@ -5,19 +5,17 @@
 <h2>Installation Complete ✓</h2>
 <p><strong>VirtualMic</strong> has been installed.</p>
 <h3>Quick Start</h3>
+<ol>
+  <li>Open <strong>VirtualMic</strong> from your Applications folder</li>
+  <li>Select a real microphone to proxy through the virtual device</li>
+  <li>In any app (Zoom, Discord, FaceTime), select <em>VirtualMic</em> as your input</li>
+  <li>Use the Sounds tab to inject audio through the virtual mic</li>
+</ol>
+<p>You can also use the CLI for scripting:</p>
 <pre style="background:#f0f0f0;padding:8px;border-radius:4px;">
-# Inject an MP3 (plays once then stops)
-VirtualMicCli inject /path/to/music.mp3
-
-# Loop an MP3 continuously (Ctrl-C to stop)
-VirtualMicCli stream /path/to/music.mp3
-
-# Check buffer fill
+VirtualMicCli start --port 9999
+VirtualMicCli inject /path/to/audio.mp3
 VirtualMicCli status
-
-# Clear injected audio
-VirtualMicCli stop
 </pre>
-<p>Select <em>VirtualMic</em> as your microphone input in any application.</p>
 </body>
 </html>

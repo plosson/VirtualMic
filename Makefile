@@ -88,6 +88,8 @@ $(APP_BINARY): $(APP_SPM_SRC) Package.swift
 gui: $(GUI_BINARY)
 
 $(GUI_BINARY): $(GUI_SRC) $(APP_BINARY)
+	@killall VirtualMic 2>/dev/null || true
+	@sleep 0.5
 	@mkdir -p $(GUI_BUNDLE)/Contents/MacOS
 	@mkdir -p $(GUI_BUNDLE)/Contents/Resources
 	$(SWIFTC) -target arm64-apple-macos13.0 \

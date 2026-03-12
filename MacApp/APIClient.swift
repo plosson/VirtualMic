@@ -80,8 +80,16 @@ class APIClient: ObservableObject {
         _ = try await post("/api/play", body: ["file": file])
     }
 
+    func stopPlayback() async throws {
+        _ = try await post("/api/play/stop", body: [:])
+    }
+
     func setVolume(_ volume: Float) async throws {
         _ = try await post("/api/volume", body: ["volume": volume])
+    }
+
+    func updateConfig(_ fields: [String: Any]) async throws {
+        _ = try await post("/api/config", body: fields)
     }
 
     // MARK: - HTTP helpers

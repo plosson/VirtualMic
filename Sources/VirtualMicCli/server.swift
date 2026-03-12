@@ -138,6 +138,14 @@ class VirtualMicServer {
             return self.handlePlay(request)
         }
 
+        server["/api/play/stop"] = { [weak self] _ in
+            guard let self = self else { return .notFound }
+            print("[server] POST /api/play/stop")
+            fflush(stdout)
+            self.injectRing.clear()
+            return self.jsonResponse(["ok": true])
+        }
+
         server["/api/volume"] = { [weak self] request in
             guard let self = self else { return .notFound }
             print("[server] POST /api/volume")

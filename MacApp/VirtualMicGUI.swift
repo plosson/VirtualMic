@@ -7,8 +7,20 @@ struct VirtualMicGUI: App {
     var body: some Scene {
         WindowGroup {
             ContentView(server: server)
-                .frame(minWidth: 480, minHeight: 500)
+                .frame(minWidth: 520, minHeight: 560)
+                .frame(idealWidth: 520, idealHeight: 620)
         }
         .windowResizability(.contentSize)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Uninstall VirtualMic...") {
+                    NotificationCenter.default.post(name: .requestUninstall, object: nil)
+                }
+            }
+        }
     }
+}
+
+extension Notification.Name {
+    static let requestUninstall = Notification.Name("requestUninstall")
 }

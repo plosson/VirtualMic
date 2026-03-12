@@ -343,6 +343,9 @@ class MicProxy {
         self.speakerRing.initialize(repeating: 0, count: speakerBufCapacity)
     }
 
+    /// Whether the speaker output unit is currently running
+    private var outputRunning = false
+
     func start() throws {
         print("[mic] Starting proxy for device \(deviceID)")
         fflush(stdout)
@@ -418,6 +421,7 @@ class MicProxy {
         guard status == noErr else { throw NSError(domain: "InitUnit", code: Int(status)) }
 
         // --- Output unit (play inject audio to speakers) ---
+        // Initialized but NOT started — started on-demand when inject audio arrives
         var outputDesc = AudioComponentDescription(
             componentType: kAudioUnitType_Output,
             componentSubType: kAudioUnitSubType_DefaultOutput,
@@ -430,7 +434,6 @@ class MicProxy {
             if AudioComponentInstanceNew(outComp, &outUnit) == noErr, let ou = outUnit {
                 outputUnit = ou
 
-                // Set stream format to match our inject audio (48kHz stereo float32 interleaved)
                 var outFormat = AudioStreamBasicDescription(
                     mSampleRate: SAMPLE_RATE,
                     mFormatID: kAudioFormatLinearPCM,
@@ -458,9 +461,7 @@ class MicProxy {
 
                 s = AudioUnitInitialize(ou)
                 if s != noErr { print("Warning: output init failed: \(s)") }
-
-                s = AudioOutputUnitStart(ou)
-                if s != noErr { print("Warning: output start failed: \(s)") }
+                // NOT started here — started on-demand by ensureOutputRunning()
             }
         }
 
@@ -469,6 +470,20 @@ class MicProxy {
         guard status == noErr else { throw NSError(domain: "StartUnit", code: Int(status)) }
         print("[mic] Input unit started, capturing from device \(deviceID)")
         fflush(stdout)
+    }
+
+    /// Start the speaker output unit (called from audio thread when inject audio arrives)
+    fileprivate func ensureOutputRunning() {
+        guard !outputRunning, let ou = outputUnit else { return }
+        AudioOutputUnitStart(ou)
+        outputRunning = true
+    }
+
+    /// Stop the speaker output unit (called when inject buffer drains)
+    fileprivate func stopOutputIfIdle() {
+        guard outputRunning, let ou = outputUnit else { return }
+        AudioOutputUnitStop(ou)
+        outputRunning = false
     }
 
     func stop() {
@@ -583,6 +598,7 @@ private func inputCallback(
         }
         // Enqueue volume-adjusted inject audio for speaker playback
         proxy.enqueueSpeakerSamples(injectBuffer, count: injectCount)
+        proxy.ensureOutputRunning()
     }
 
     // Write mixed audio to main ring buffer (driver reads this)
@@ -604,12 +620,21 @@ private func outputRenderCallback(
     guard let bufList = ioData else { return noErr }
 
     let abl = UnsafeMutableAudioBufferListPointer(bufList)
+    var hadData = false
     for buf in abl {
         if let data = buf.mData?.assumingMemoryBound(to: Float.self) {
             let count = Int(buf.mDataByteSize) / MemoryLayout<Float>.size
-            _ = proxy.dequeueSpeakerSamples(into: data, count: count)
+            let read = proxy.dequeueSpeakerSamples(into: data, count: count)
+            if read > 0 { hadData = true }
         }
     }
+
+    // Stop output unit when speaker buffer is fully drained
+    if !hadData {
+        // Schedule stop on a non-audio thread to avoid deadlock
+        DispatchQueue.global().async { proxy.stopOutputIfIdle() }
+    }
+
     return noErr
 }
 

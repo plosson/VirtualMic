@@ -79,13 +79,13 @@ class ServerManager: ObservableObject {
     }
 
     func checkIfRunning(port: UInt16 = 9999) {
-        let url = URL(string: "http://localhost:\(port)/api/status")!
-        URLSession.shared.dataTask(with: url) { data, response, error in
+        let url = URL(string: "http://127.0.0.1:\(port)/api/status")!
+        URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
             guard error == nil,
                   let http = response as? HTTPURLResponse,
                   http.statusCode == 200 else { return }
             DispatchQueue.main.async {
-                self.isRunning = true
+                self?.isRunning = true
             }
         }.resume()
     }
