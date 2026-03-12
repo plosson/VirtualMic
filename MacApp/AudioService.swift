@@ -616,11 +616,13 @@ private func getAudioDeviceStringProperty(_ devID: AudioDeviceID, selector: Audi
         mScope: kAudioObjectPropertyScopeGlobal,
         mElement: kAudioObjectPropertyElementMain
     )
-    var ref: Unmanaged<CFString>?
-    var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-    let status = AudioObjectGetPropertyData(devID, &addr, 0, nil, &size, &ref)
-    guard status == noErr, let cfStr = ref else { return nil }
-    return cfStr.takeUnretainedValue() as String
+    var size: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(devID, &addr, 0, nil, &size) == noErr, size > 0 else { return nil }
+    let buf = UnsafeMutableRawPointer.allocate(byteCount: Int(size), alignment: MemoryLayout<CFString>.alignment)
+    defer { buf.deallocate() }
+    guard AudioObjectGetPropertyData(devID, &addr, 0, nil, &size, buf) == noErr else { return nil }
+    let cfStr = Unmanaged<CFString>.fromOpaque(buf.load(as: UnsafeRawPointer.self)).takeUnretainedValue()
+    return cfStr as String
 }
 
 // MARK: - AudioService

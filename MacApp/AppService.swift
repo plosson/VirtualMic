@@ -305,6 +305,7 @@ class AppService: ObservableObject {
         AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
     var virtualMicVisible: Bool { audio.virtualMicVisible }
+    var speakerShmAvailable: Bool { audio.speakerRing != nil }
     var shmAvailable: Bool { audio.mainRing != nil && audio.injectRing != nil }
 
     private func startPolling() {

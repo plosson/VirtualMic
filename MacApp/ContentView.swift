@@ -605,10 +605,13 @@ struct ContentView: View {
                             cardTitle("Health Check", icon: "checkmark.shield.fill")
                             healthRow("Driver installed", ok: app.driverInstalled)
                             healthRow("VirtualMic visible", ok: app.virtualMicVisible)
-                            healthRow("Shared memory", ok: app.shmAvailable)
+                            healthRow("Mic shared memory", ok: app.shmAvailable)
+                            healthRow("Speaker shared memory", ok: app.speakerShmAvailable)
                             healthRow("Microphone permission", ok: app.hasMicPermission)
                             healthRow("Input devices found", ok: !app.devices.isEmpty)
-                            healthRow("Proxy active", ok: app.proxyRunning)
+                            healthRow("Output devices found", ok: !app.outputDevices.isEmpty)
+                            healthRow("Mic proxy active", ok: app.proxyRunning)
+                            healthRow("Speaker proxy active", ok: app.speakerProxyRunning)
                         }
                     }
 
