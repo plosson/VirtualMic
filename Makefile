@@ -116,6 +116,11 @@ sign: all
 	    $(APP_BINARY)
 	codesign --force --options runtime \
 	    --sign "$(DEVID)" \
+	    --identifier $(APP_BUNDLE_ID) \
+	    --entitlements App/entitlements.plist \
+	    $(GUI_BUNDLE)/Contents/Resources/VirtualMicCli
+	codesign --force --options runtime \
+	    --sign "$(DEVID)" \
 	    --identifier $(GUI_BUNDLE_ID) \
 	    --entitlements App/entitlements.plist \
 	    $(GUI_BUNDLE)
