@@ -87,7 +87,7 @@ $(APP_BINARY): $(APP_SPM_SRC) Package.swift
 # ---- GUI app ----
 gui: $(GUI_BINARY)
 
-$(GUI_BINARY): $(GUI_SRC) $(APP_BINARY)
+$(GUI_BINARY): $(GUI_SRC) $(APP_BINARY) $(DRIVER_BINARY)
 	@killall VirtualMic 2>/dev/null || true
 	@sleep 0.5
 	@mkdir -p $(GUI_BUNDLE)/Contents/MacOS
@@ -105,6 +105,7 @@ $(GUI_BINARY): $(GUI_SRC) $(APP_BINARY)
 	@/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(VERSION)" $(GUI_BUNDLE)/Contents/Info.plist
 	@/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(VERSION)" $(GUI_BUNDLE)/Contents/Info.plist
 	@cp MacApp/AppIcon.icns $(GUI_BUNDLE)/Contents/Resources/AppIcon.icns
+	@cp -R $(DRIVER_BUNDLE) $(GUI_BUNDLE)/Contents/Resources/VirtualMic.driver
 	@cp $(APP_BINARY) $(GUI_BUNDLE)/Contents/Resources/VirtualMicCli
 	codesign --force --sign - --entitlements App/entitlements.plist $(GUI_BUNDLE)
 	@echo "✓ GUI app built → $(GUI_BUNDLE)"

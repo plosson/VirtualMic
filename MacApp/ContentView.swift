@@ -453,6 +453,22 @@ struct ContentView: View {
                             .font(.system(size: 12))
                             .foregroundColor(Theme.bodyText)
                         Spacer()
+                        if !app.driverInstalled {
+                            Button { performInstall() } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "arrow.down.circle")
+                                    Text("Install Driver")
+                                }
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(Theme.accent)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Theme.accent.opacity(0.12))
+                                .cornerRadius(8)
+                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.accent.opacity(0.3), lineWidth: 1))
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 }
             }
@@ -573,6 +589,31 @@ struct ContentView: View {
         if panel.runModal() == .OK, let url = panel.url {
             app.setSoundsDir(url.path)
             showToast("Sounds folder updated")
+        }
+    }
+
+    private func performInstall() {
+        guard let driverSource = Bundle.main.url(forResource: "VirtualMic", withExtension: "driver") else {
+            showToast("Driver bundle not found in app resources")
+            return
+        }
+        let src = driverSource.path
+        let dst = "/Library/Audio/Plug-Ins/HAL"
+        let script = """
+        do shell script "mkdir -p \(dst); \
+        rm -rf \(dst)/VirtualMic.driver; \
+        cp -R \\\"\(src)\\\" \(dst)/; \
+        chown -R root:wheel \(dst)/VirtualMic.driver; \
+        killall -9 coreaudiod 2>/dev/null || true" with administrator privileges
+        """
+        var error: NSDictionary?
+        if let appleScript = NSAppleScript(source: script) {
+            appleScript.executeAndReturnError(&error)
+            if error == nil {
+                showToast("Driver installed — restarting Core Audio")
+            } else {
+                showToast("Install cancelled or failed")
+            }
         }
     }
 
