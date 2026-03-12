@@ -1,8 +1,14 @@
 import SwiftUI
+import AVFoundation
 
 @main
 struct VirtualMicGUI: App {
     @StateObject private var server = ServerManager()
+
+    init() {
+        // Request microphone permission immediately on launch
+        AVCaptureDevice.requestAccess(for: .audio) { _ in }
+    }
 
     var body: some Scene {
         WindowGroup {

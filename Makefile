@@ -15,7 +15,7 @@
 
 BUNDLE_ID     = com.virtualmicdrv.driver
 APP_BUNDLE_ID = com.virtualmicdrv.app
-VERSION       = 1.0.0
+VERSION       = $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.0.0")
 
 # ---- Paths ----
 DRIVER_SRC    = Driver/VirtualMicDriver.c
@@ -98,6 +98,8 @@ $(GUI_BINARY): $(GUI_SRC) $(APP_BINARY)
 	    -o $(GUI_BINARY) \
 	    $(GUI_SRC)
 	@cp MacApp/Info.plist $(GUI_BUNDLE)/Contents/Info.plist
+	@/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(VERSION)" $(GUI_BUNDLE)/Contents/Info.plist
+	@/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(VERSION)" $(GUI_BUNDLE)/Contents/Info.plist
 	@cp MacApp/AppIcon.icns $(GUI_BUNDLE)/Contents/Resources/AppIcon.icns
 	@cp $(APP_BINARY) $(GUI_BUNDLE)/Contents/Resources/VirtualMicCli
 	codesign --force --sign - --entitlements App/entitlements.plist $(GUI_BUNDLE)
@@ -153,8 +155,9 @@ pkg: sign
 	    --version $(VERSION) \
 	    --scripts Installer/scripts \
 	    build/VirtualMic_component.pkg
+	@sed 's/version="1.0.0"/version="$(VERSION)"/' Installer/distribution.xml > build/distribution.xml
 	productbuild \
-	    --distribution Installer/distribution.xml \
+	    --distribution build/distribution.xml \
 	    --package-path build \
 	    --sign "$(INSTALLER_ID)" \
 	    $(PKG_OUT)

@@ -369,7 +369,63 @@ struct ContentView: View {
     // MARK: - Sound Board Tab
 
     private var soundBoardTab: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
+            // Toolbar: refresh + stop all
+            HStack(spacing: 8) {
+                Button {
+                    Task {
+                        sounds = (try? await api.getSounds()) ?? sounds
+                        showToast("Sounds refreshed")
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.clockwise")
+                        Text("Refresh")
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(Theme.accent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Theme.accent.opacity(0.12))
+                    .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
+
+                if currentlyPlaying != nil {
+                    Button {
+                        Task { await doStopPlayback() }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "stop.fill")
+                            Text("Stop")
+                        }
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.red)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.red.opacity(0.12))
+                        .cornerRadius(6)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Spacer()
+
+                Button {
+                    if !soundsDir.isEmpty {
+                        NSWorkspace.shared.open(URL(fileURLWithPath: soundsDir))
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "folder.fill")
+                        Text("Open Folder")
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(Theme.dimText)
+                }
+                .buttonStyle(.plain)
+            }
+
             if sounds.isEmpty {
                 VStack(spacing: 16) {
                     Spacer()
@@ -384,25 +440,9 @@ struct ContentView: View {
                     Text("No sounds yet")
                         .font(.system(size: 15, weight: .medium))
                         .foregroundColor(Theme.bodyText)
-                    VStack(spacing: 4) {
-                        Text("Drop audio files in your sounds folder")
-                            .font(.system(size: 12))
-                            .foregroundColor(Theme.dimText)
-                        Button {
-                            if !soundsDir.isEmpty {
-                                NSWorkspace.shared.open(URL(fileURLWithPath: soundsDir))
-                            }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "folder.fill")
-                                Text("Open Folder")
-                            }
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(Theme.accent)
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.top, 4)
-                    }
+                    Text("Drop audio files in your sounds folder")
+                        .font(.system(size: 12))
+                        .foregroundColor(Theme.dimText)
                     Spacer()
                 }
                 .frame(maxWidth: .infinity)
@@ -578,7 +618,7 @@ struct ContentView: View {
                             .foregroundColor(Theme.dimText)
                     }
                     Spacer()
-                    Text("v1.0")
+                    Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")")
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(Theme.dimText)
                         .padding(.horizontal, 8)
@@ -701,9 +741,6 @@ struct ContentView: View {
             currentlyPlaying = file
             try await api.play(file: file)
             showToast("Playing: \((file as NSString).deletingPathExtension)")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                if currentlyPlaying == file { currentlyPlaying = nil }
-            }
         } catch {
             currentlyPlaying = nil
             showToast("Error: \(error.localizedDescription)")
@@ -761,6 +798,10 @@ struct ContentView: View {
                         volume = status.proxy.injectVolume ?? volume
                         mainRingPercent = status.mainRing.fillPercent
                         injectRingPercent = status.injectRing.fillPercent
+                        // Clear playing state when inject buffer drains
+                        if currentlyPlaying != nil && status.injectRing.availableSamples == 0 {
+                            currentlyPlaying = nil
+                        }
                     }
                 } catch {}
             }

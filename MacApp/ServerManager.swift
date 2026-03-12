@@ -7,6 +7,7 @@ class ServerManager: ObservableObject {
 
     private var process: Process?
     private var outputPipe: Pipe?
+    private var checkTimer: Timer?
 
     var cliPath: String {
         let paths = [
@@ -17,6 +18,7 @@ class ServerManager: ObservableObject {
     }
 
     func start(port: UInt16 = 9999) {
+        stopCheckTimer()
         guard !isRunning else { return }
 
         // Kill any existing VirtualMicCli process to free the port
@@ -78,7 +80,21 @@ class ServerManager: ObservableObject {
         isRunning = false
     }
 
+    /// Check if server is running, retrying every 2s until found or stopped
     func checkIfRunning(port: UInt16 = 9999) {
+        stopCheckTimer()
+        doCheck(port: port)
+        // Keep retrying every 2 seconds until server is found
+        checkTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            guard let self = self, !self.isRunning else {
+                self?.stopCheckTimer()
+                return
+            }
+            self.doCheck(port: port)
+        }
+    }
+
+    private func doCheck(port: UInt16) {
         let url = URL(string: "http://127.0.0.1:\(port)/api/status")!
         URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
             guard error == nil,
@@ -86,8 +102,14 @@ class ServerManager: ObservableObject {
                   http.statusCode == 200 else { return }
             DispatchQueue.main.async {
                 self?.isRunning = true
+                self?.stopCheckTimer()
             }
         }.resume()
+    }
+
+    private func stopCheckTimer() {
+        checkTimer?.invalidate()
+        checkTimer = nil
     }
 
     private func killExisting() {
