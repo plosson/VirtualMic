@@ -181,12 +181,18 @@ class AppService: ObservableObject {
             throw NSError(domain: "AppService", code: -1,
                           userInfo: [NSLocalizedDescriptionKey: "Output device not found: \(deviceName)"])
         }
-        try audio.startSpeakerProxy(deviceID: device.id, deviceName: device.name, bufferDuration: dashcamBufferSeconds)
-        speakerProxyRunning = true
-        speakerProxyDeviceName = device.name
-        selectedOutputDevice = device.name
-        config.selectedOutputDevice = device.name
-        config.save()
+        do {
+            try audio.startSpeakerProxy(deviceID: device.id, deviceName: device.name, bufferDuration: dashcamBufferSeconds)
+            speakerProxyRunning = true
+            speakerProxyDeviceName = device.name
+            selectedOutputDevice = device.name
+            config.selectedOutputDevice = device.name
+            config.save()
+        } catch {
+            speakerProxyRunning = false
+            speakerProxyDeviceName = nil
+            throw error
+        }
     }
 
     func stopSpeakerProxy() {
@@ -200,11 +206,23 @@ class AppService: ObservableObject {
         dashcamBufferSeconds = max(1, min(30, seconds))
         config.dashcamBufferSeconds = dashcamBufferSeconds
         config.save()
+
+        // Restart proxy with new buffer duration if running
+        if speakerProxyRunning, let deviceName = speakerProxyDeviceName {
+            audio.stopSpeakerProxy()
+            do {
+                try audio.startSpeakerProxy(deviceID: audio.findOutputDevice(matching: deviceName)!.id,
+                                            deviceName: deviceName, bufferDuration: dashcamBufferSeconds)
+            } catch {
+                speakerProxyRunning = false
+                speakerProxyDeviceName = nil
+                print("[AppService] Failed to restart speaker proxy: \(error)")
+            }
+        }
     }
 
     func saveDashcamSnapshot() -> URL? {
-        let dir = (config.soundsDir as NSString).deletingLastPathComponent
-        let snapshotDir = (dir as NSString).appendingPathComponent("VirtualMicDashcam")
+        let snapshotDir = (NSHomeDirectory() as NSString).appendingPathComponent("VirtualMicDashcam")
         try? FileManager.default.createDirectory(atPath: snapshotDir, withIntermediateDirectories: true)
 
         let formatter = DateFormatter()

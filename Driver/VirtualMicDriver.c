@@ -244,6 +244,14 @@ static void SHM_OpenNamed(DeviceState* st, const char* name)
     void* m = mmap(NULL, sz, PROT_READ | PROT_WRITE, MAP_SHARED, st->shmFd, 0);
     if (m == MAP_FAILED) { close(st->shmFd); st->shmFd = -1; return; }
     st->shm = (VirtualMicSHM*)m;
+
+    // Ensure capacity is initialized (may have been created by driver before app)
+    uint32_t expectedCap = VIRTUALMICDRV_SHM_SIZE / sizeof(float);
+    if (st->shm->capacity == 0) {
+        st->shm->capacity = expectedCap;
+        atomic_store_explicit(&st->shm->writePos, 0, memory_order_release);
+        atomic_store_explicit(&st->shm->readPos,  0, memory_order_release);
+    }
 }
 
 // Read `numFrames` stereo frames from ring buffer into `out` (for VirtualMic input).
@@ -272,6 +280,7 @@ static void SHM_Read(DeviceState* st, float* out, uint32_t numFrames)
     }
 
     uint32_t cap = shm->capacity;
+    if (cap == 0) { memset(out, 0, numSamples * sizeof(float)); return; }
     for (uint32_t i = 0; i < numSamples; i++) {
         uint32_t idx = (uint32_t)((rp + i) % cap);
         float s = shm->data[idx];
@@ -290,6 +299,7 @@ static void SHM_Write(DeviceState* st, const float* in, uint32_t numFrames)
     VirtualMicSHM* shm = st->shm;
     uint64_t wp = atomic_load_explicit(&shm->writePos, memory_order_acquire);
     uint32_t cap = shm->capacity;
+    if (cap == 0) return;
 
     for (uint32_t i = 0; i < numSamples; i++) {
         uint32_t idx = (uint32_t)((wp + i) % cap);
@@ -676,7 +686,7 @@ static OSStatus VirtualMic_GetPropertyData(AudioServerPlugInDriverRef inDriver,
             *(CFStringRef*)outData = CFStringCreateWithCString(NULL, "", kCFStringEncodingUTF8);
             return kAudioHardwareNoError;
         case kAudioPlugInPropertyTranslateUIDToDevice: {
-            CFStringRef uid = *(CFStringRef*)inQualData;
+            CFStringRef uid = (inQualDataSize >= sizeof(CFStringRef)) ? *(CFStringRef*)inQualData : NULL;
             AudioObjectID result = kAudioObjectUnknown;
             if (uid) {
                 if (CFStringCompare(uid, CFSTR("VirtualMic-UID-001"), 0) == kCFCompareEqualTo)
