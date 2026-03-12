@@ -88,11 +88,66 @@ struct ContentView: View {
 
     private var headerBar: some View {
         HStack(spacing: 8) {
-            if app.proxyRunning {
-                Button {
-                    app.stopProxy()
-                    showToast("Proxy stopped")
-                } label: {
+            // Left: Mic proxy
+            headerProxyButton(
+                running: app.proxyRunning,
+                disabled: app.selectedDevice.isEmpty,
+                onStart: {
+                    do { try app.startProxy(deviceName: app.selectedDevice); showToast("Mic proxy started") }
+                    catch { showToast("Error: \(error.localizedDescription)") }
+                },
+                onStop: { app.stopProxy(); showToast("Mic proxy stopped") }
+            )
+
+            Menu {
+                Button("-- Select microphone --") { app.selectedDevice = "" }
+                Divider()
+                ForEach(app.devices) { dev in
+                    Button("\(dev.name) (\(dev.inputChannels) ch)") { app.selectedDevice = dev.name }
+                }
+            } label: {
+                headerDropdownLabel(
+                    icon: "mic.fill", placeholder: "Select microphone",
+                    value: app.selectedDevice, color: Theme.purple
+                )
+            }
+            .disabled(app.proxyRunning)
+
+            Spacer()
+
+            // Right: Speaker proxy
+            Menu {
+                Button("-- Select output --") { app.selectedOutputDevice = "" }
+                Divider()
+                ForEach(app.outputDevices) { dev in
+                    Button(dev.name) { app.selectedOutputDevice = dev.name }
+                }
+            } label: {
+                headerDropdownLabel(
+                    icon: "speaker.fill", placeholder: "Select output",
+                    value: app.selectedOutputDevice, color: Theme.accent
+                )
+            }
+            .disabled(app.speakerProxyRunning)
+
+            headerProxyButton(
+                running: app.speakerProxyRunning,
+                disabled: app.selectedOutputDevice.isEmpty,
+                onStart: {
+                    do { try app.startSpeakerProxy(deviceName: app.selectedOutputDevice); showToast("Speaker proxy started") }
+                    catch { showToast("Error: \(error.localizedDescription)") }
+                },
+                onStop: { app.stopSpeakerProxy(); showToast("Speaker proxy stopped") }
+            )
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    private func headerProxyButton(running: Bool, disabled: Bool, onStart: @escaping () -> Void, onStop: @escaping () -> Void) -> some View {
+        Group {
+            if running {
+                Button(action: onStop) {
                     Image(systemName: "stop.fill")
                         .font(.system(size: 9))
                         .foregroundColor(.white)
@@ -102,59 +157,39 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
             } else {
-                Button {
-                    do {
-                        try app.startProxy(deviceName: app.selectedDevice)
-                        showToast("Proxy started")
-                    } catch {
-                        showToast("Error: \(error.localizedDescription)")
-                    }
-                } label: {
+                Button(action: onStart) {
                     Image(systemName: "play.fill")
                         .font(.system(size: 9))
-                        .foregroundColor(app.selectedDevice.isEmpty ? Theme.dimText : Theme.bg)
+                        .foregroundColor(disabled ? Theme.dimText : Theme.bg)
                         .frame(width: 28, height: 28)
-                        .background(app.selectedDevice.isEmpty ? Color.white.opacity(0.05) : Theme.accent)
+                        .background(disabled ? Color.white.opacity(0.05) : Theme.accent)
                         .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
-                .disabled(app.selectedDevice.isEmpty)
+                .disabled(disabled)
             }
-
-            Menu {
-                Button("-- Select microphone --") { app.selectedDevice = "" }
-                Divider()
-                ForEach(app.devices) { dev in
-                    Button("\(dev.name) (\(dev.inputChannels) ch)") {
-                        app.selectedDevice = dev.name
-                    }
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "waveform")
-                        .font(.system(size: 10))
-                        .foregroundColor(Theme.purple)
-                    Text(app.selectedDevice.isEmpty ? "Select microphone" : app.selectedDevice)
-                        .font(.system(size: 11))
-                        .foregroundColor(app.selectedDevice.isEmpty ? Theme.dimText : Theme.bodyText)
-                        .lineLimit(1)
-                    Spacer()
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 8))
-                        .foregroundColor(Theme.dimText)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(Color.white.opacity(0.04))
-                .cornerRadius(6)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.cardBorder, lineWidth: 1))
-            }
-            .disabled(app.proxyRunning)
-
-            Spacer()
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+    }
+
+    private func headerDropdownLabel(icon: String, placeholder: String, value: String, color: Color) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+                .foregroundColor(color)
+            Text(value.isEmpty ? placeholder : value)
+                .font(.system(size: 11))
+                .foregroundColor(value.isEmpty ? Theme.dimText : Theme.bodyText)
+                .lineLimit(1)
+            Spacer()
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 8))
+                .foregroundColor(Theme.dimText)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Color.white.opacity(0.04))
+        .cornerRadius(6)
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.cardBorder, lineWidth: 1))
     }
 
     // MARK: - Tab Bar
@@ -340,78 +375,13 @@ struct ContentView: View {
 
     private var dashcamTab: some View {
         VStack(spacing: 16) {
-            // Output device selector + start/stop
+            // Description
             card {
-                VStack(alignment: .leading, spacing: 12) {
-                    cardTitle("Speaker Proxy", icon: "speaker.wave.2.fill")
-                    Text("Route system audio through VirtualSpeaker to a real output device, recording a rolling buffer for instant replay.")
+                VStack(alignment: .leading, spacing: 8) {
+                    cardTitle("Audio Dashcam", icon: "record.circle")
+                    Text("Route system audio through VirtualSpeaker to a real output device (select in header bar). A rolling buffer continuously records the last \(Int(app.dashcamBufferSeconds)) seconds for instant replay snapshots.")
                         .font(.system(size: 11))
                         .foregroundColor(Theme.dimText)
-
-                    HStack(spacing: 8) {
-                        if app.speakerProxyRunning {
-                            Button {
-                                app.stopSpeakerProxy()
-                                showToast("Speaker proxy stopped")
-                            } label: {
-                                Image(systemName: "stop.fill")
-                                    .font(.system(size: 9))
-                                    .foregroundColor(.white)
-                                    .frame(width: 28, height: 28)
-                                    .background(Color.red.opacity(0.8))
-                                    .cornerRadius(6)
-                            }
-                            .buttonStyle(.plain)
-                        } else {
-                            Button {
-                                do {
-                                    try app.startSpeakerProxy(deviceName: app.selectedOutputDevice)
-                                    showToast("Speaker proxy started")
-                                } catch {
-                                    showToast("Error: \(error.localizedDescription)")
-                                }
-                            } label: {
-                                Image(systemName: "play.fill")
-                                    .font(.system(size: 9))
-                                    .foregroundColor(app.selectedOutputDevice.isEmpty ? Theme.dimText : Theme.bg)
-                                    .frame(width: 28, height: 28)
-                                    .background(app.selectedOutputDevice.isEmpty ? Color.white.opacity(0.05) : Theme.accent)
-                                    .cornerRadius(6)
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(app.selectedOutputDevice.isEmpty)
-                        }
-
-                        Menu {
-                            Button("-- Select output device --") { app.selectedOutputDevice = "" }
-                            Divider()
-                            ForEach(app.outputDevices) { dev in
-                                Button(dev.name) {
-                                    app.selectedOutputDevice = dev.name
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "speaker.fill")
-                                    .font(.system(size: 10))
-                                    .foregroundColor(Theme.purple)
-                                Text(app.selectedOutputDevice.isEmpty ? "Select output device" : app.selectedOutputDevice)
-                                    .font(.system(size: 11))
-                                    .foregroundColor(app.selectedOutputDevice.isEmpty ? Theme.dimText : Theme.bodyText)
-                                    .lineLimit(1)
-                                Spacer()
-                                Image(systemName: "chevron.up.chevron.down")
-                                    .font(.system(size: 8))
-                                    .foregroundColor(Theme.dimText)
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .background(Color.white.opacity(0.04))
-                            .cornerRadius(6)
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.cardBorder, lineWidth: 1))
-                        }
-                        .disabled(app.speakerProxyRunning)
-                    }
                 }
             }
 
