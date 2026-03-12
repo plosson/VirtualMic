@@ -608,6 +608,21 @@ private func speakerOutputCallback(
     return noErr
 }
 
+// MARK: - CoreAudio Property Helpers
+
+private func getAudioDeviceStringProperty(_ devID: AudioDeviceID, selector: AudioObjectPropertySelector) -> String? {
+    var addr = AudioObjectPropertyAddress(
+        mSelector: selector,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var ref: Unmanaged<CFString>?
+    var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+    let status = AudioObjectGetPropertyData(devID, &addr, 0, nil, &size, &ref)
+    guard status == noErr, let cfStr = ref else { return nil }
+    return cfStr.takeUnretainedValue() as String
+}
+
 // MARK: - AudioService
 
 class AudioService {
@@ -667,28 +682,11 @@ class AudioService {
             for buf in bufList { totalChannels += Int(buf.mNumberChannels) }
             if totalChannels == 0 { continue }
 
-            var nameAddr = AudioObjectPropertyAddress(
-                mSelector: kAudioObjectPropertyName,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            var nameRef: CFString = "" as CFString
-            var nameSize = UInt32(MemoryLayout<CFString>.size)
-            AudioObjectGetPropertyData(devID, &nameAddr, 0, nil, &nameSize, &nameRef)
-
-            var uidAddr = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyDeviceUID,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            var uidRef: CFString = "" as CFString
-            var uidSize = UInt32(MemoryLayout<CFString>.size)
-            AudioObjectGetPropertyData(devID, &uidAddr, 0, nil, &uidSize, &uidRef)
-
-            let uid = uidRef as String
+            let name = getAudioDeviceStringProperty(devID, selector: kAudioObjectPropertyName) ?? ""
+            let uid = getAudioDeviceStringProperty(devID, selector: kAudioDevicePropertyDeviceUID) ?? ""
             if uid.contains("VirtualMic") { continue }
 
-            result.append(AudioDeviceInfo(id: devID, name: nameRef as String, uid: uid, inputChannels: totalChannels))
+            result.append(AudioDeviceInfo(id: devID, name: name, uid: uid, inputChannels: totalChannels))
         }
         return result
     }
@@ -775,29 +773,12 @@ class AudioService {
             for buf in bufList { totalChannels += Int(buf.mNumberChannels) }
             if totalChannels == 0 { continue }
 
-            var nameAddr = AudioObjectPropertyAddress(
-                mSelector: kAudioObjectPropertyName,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            var nameRef: CFString = "" as CFString
-            var nameSize = UInt32(MemoryLayout<CFString>.size)
-            AudioObjectGetPropertyData(devID, &nameAddr, 0, nil, &nameSize, &nameRef)
-
-            var uidAddr = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyDeviceUID,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            var uidRef: CFString = "" as CFString
-            var uidSize = UInt32(MemoryLayout<CFString>.size)
-            AudioObjectGetPropertyData(devID, &uidAddr, 0, nil, &uidSize, &uidRef)
-
-            let uid = uidRef as String
+            let name = getAudioDeviceStringProperty(devID, selector: kAudioObjectPropertyName) ?? ""
+            let uid = getAudioDeviceStringProperty(devID, selector: kAudioDevicePropertyDeviceUID) ?? ""
             // Exclude our own virtual devices
             if uid.contains("VirtualMic") || uid.contains("VirtualSpeaker") { continue }
 
-            result.append(AudioDeviceInfo(id: devID, name: nameRef as String, uid: uid, inputChannels: totalChannels))
+            result.append(AudioDeviceInfo(id: devID, name: name, uid: uid, inputChannels: totalChannels))
         }
         return result
     }
@@ -918,16 +899,8 @@ class AudioService {
         guard AudioObjectGetPropertyData(
             AudioObjectID(kAudioObjectSystemObject), &propAddr, 0, nil, &dataSize, &ids) == noErr else { return false }
         for devID in ids {
-            var uidAddr = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyDeviceUID,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            var uidRef: CFString = "" as CFString
-            var uidSize = UInt32(MemoryLayout<CFString>.size)
-            if AudioObjectGetPropertyData(devID, &uidAddr, 0, nil, &uidSize, &uidRef) == noErr {
-                let uidStr = uidRef as String
-                if uidStr.contains("VirtualMic") || uidStr.contains("VirtualSpeaker") { return true }
+            if let uid = getAudioDeviceStringProperty(devID, selector: kAudioDevicePropertyDeviceUID) {
+                if uid.contains("VirtualMic") || uid.contains("VirtualSpeaker") { return true }
             }
         }
         return false
