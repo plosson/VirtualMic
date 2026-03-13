@@ -26,12 +26,8 @@ CMDS=""
 [ -d "$APP" ] && CMDS="$CMDS rm -rf '$APP';"
 [ -d "$UNINSTALLER" ] && CMDS="$CMDS rm -rf '$UNINSTALLER';"
 
-# Clean up stale shared memory segments
-CMDS="$CMDS cat > /tmp/_vm_shm_clean.c << 'SHM'
-#include <sys/mman.h>
-int main(void) { shm_unlink(\"/VirtualMicAudio\"); shm_unlink(\"/VirtualSpeakerAudio\"); shm_unlink(\"/VirtualMicInject\"); return 0; }
-SHM
-cc -o /tmp/_vm_shm_clean /tmp/_vm_shm_clean.c 2>/dev/null && /tmp/_vm_shm_clean 2>/dev/null; rm -f /tmp/_vm_shm_clean /tmp/_vm_shm_clean.c;"
+# Clean up stale shared memory segments (avoid double quotes — they break AppleScript escaping)
+CMDS="$CMDS python3 -c 'import ctypes,sys; rt=ctypes.CDLL(None); [rt.shm_unlink(n.encode()) for n in sys.argv[1:]]' /VirtualMicAudio /VirtualSpeakerAudio /VirtualMicInject 2>/dev/null; true;"
 
 # Restart coreaudiod
 CMDS="$CMDS launchctl kickstart -kp system/com.apple.audio.coreaudiod 2>/dev/null || killall coreaudiod 2>/dev/null || true;"

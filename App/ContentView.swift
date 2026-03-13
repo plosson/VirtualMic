@@ -403,9 +403,16 @@ struct ContentView: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(Theme.bodyText)
                         .lineLimit(1)
-                    Text(ext)
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(Theme.dimText)
+                    HStack(spacing: 6) {
+                        Text(ext)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(Theme.dimText)
+                        if let dur = app.soundDurations[name] {
+                            Text(formatDuration(dur))
+                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                .foregroundColor(Theme.dimText)
+                        }
+                    }
                 }
 
                 Spacer()
@@ -765,6 +772,16 @@ struct ContentView: View {
             }
             .frame(height: 4)
         }
+    }
+
+    // MARK: - Helpers
+
+    private func formatDuration(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds)
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        let s = total % 60
+        return String(format: "%02d:%02d:%02d", h, m, s)
     }
 
     // MARK: - Actions

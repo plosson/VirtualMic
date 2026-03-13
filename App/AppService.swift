@@ -49,6 +49,7 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published var proxyDeviceName: String?
     @Published var devices: [AudioDeviceInfo] = []
     @Published var sounds: [String] = []
+    @Published var soundDurations: [String: TimeInterval] = [:]
     @Published var baseDir: String = ""
     @Published var selectedDevice: String = ""
     @Published var volume: Float = 1.0
@@ -368,6 +369,20 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
         sounds = files.filter { f in
             audioExts.contains((f as NSString).pathExtension.lowercased())
         }.sorted()
+
+        var durations: [String: TimeInterval] = [:]
+        for name in sounds {
+            let path = (dir as NSString).appendingPathComponent(name)
+            let url = URL(fileURLWithPath: path)
+            if let file = try? AVAudioFile(forReading: url) {
+                let frames = Double(file.length)
+                let sampleRate = file.processingFormat.sampleRate
+                if sampleRate > 0 {
+                    durations[name] = frames / sampleRate
+                }
+            }
+        }
+        soundDurations = durations
     }
 
     func playSound(name: String) {
