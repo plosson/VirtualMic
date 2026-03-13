@@ -938,8 +938,10 @@ static OSStatus VirtualMic_SetPropertyData(AudioServerPlugInDriverRef inDriver,
 
     if (IsDevice(inObjectID)) {
         if (inAddress->mSelector == kAudioDevicePropertyNominalSampleRate) {
+            Float64 newRate = *(Float64*)inData;
+            if (newRate < 1.0 || newRate > 384000.0) return kAudioHardwareIllegalOperationError;
             pthread_mutex_lock(&gDriver.stateLock);
-            atomic_store_explicit(&gDriver.sampleRate, *(Float64*)inData, memory_order_release);
+            atomic_store_explicit(&gDriver.sampleRate, newRate, memory_order_release);
             pthread_mutex_unlock(&gDriver.stateLock);
             return kAudioHardwareNoError;
         }
