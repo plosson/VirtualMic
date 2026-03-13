@@ -1022,12 +1022,7 @@ static OSStatus VirtualMic_StopIO(AudioServerPlugInDriverRef inDriver,
     if (!st) return kAudioHardwareBadDeviceError;
 
     pthread_mutex_lock(&gDriver.stateLock);
-    if (st->ioRunning > 0) {
-        st->ioRunning--;
-        if (st->ioRunning == 0) {
-            SHM_Close(st);
-        }
-    }
+    if (st->ioRunning > 0) st->ioRunning--;
     pthread_mutex_unlock(&gDriver.stateLock);
     return kAudioHardwareNoError;
 }
