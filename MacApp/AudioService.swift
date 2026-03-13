@@ -786,6 +786,14 @@ class AudioService {
         return result
     }
 
+    func defaultDevice(input: Bool) -> AudioDeviceInfo? {
+        guard let deviceID = getSystemDefaultDevice(input: input) else { return nil }
+        let uid = getAudioDeviceStringProperty(deviceID, selector: kAudioDevicePropertyDeviceUID) ?? ""
+        if uid.contains("VirtualMic") || uid.contains("VirtualSpeaker") { return nil }
+        let name = getAudioDeviceStringProperty(deviceID, selector: kAudioObjectPropertyName) ?? ""
+        return AudioDeviceInfo(id: deviceID, name: name, uid: uid, inputChannels: 0)
+    }
+
     func findOutputDevice(matching query: String) -> AudioDeviceInfo? {
         let devices = listOutputDevices()
         if let exact = devices.first(where: { $0.name.lowercased() == query.lowercased() }) {
@@ -897,8 +905,9 @@ class AudioService {
     var micPeakLevel: Float { proxy?.micPeakLevel ?? 0.0 }
     var injectPeakLevel: Float { proxy?.injectPeakLevel ?? 0.0 }
 
-    /// Check if VirtualMic appears as an audio device in the system
-    var virtualMicVisible: Bool {
+    // MARK: - System Default Device Switching
+
+    func findDeviceByUID(_ uidFragment: String) -> AudioDeviceID? {
         var propAddr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -906,17 +915,61 @@ class AudioService {
         )
         var dataSize: UInt32 = 0
         guard AudioObjectGetPropertyDataSize(
-            AudioObjectID(kAudioObjectSystemObject), &propAddr, 0, nil, &dataSize) == noErr else { return false }
+            AudioObjectID(kAudioObjectSystemObject), &propAddr, 0, nil, &dataSize) == noErr else { return nil }
         let count = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
         var ids = [AudioDeviceID](repeating: 0, count: count)
         guard AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &propAddr, 0, nil, &dataSize, &ids) == noErr else { return false }
+            AudioObjectID(kAudioObjectSystemObject), &propAddr, 0, nil, &dataSize, &ids) == noErr else { return nil }
         for devID in ids {
-            if let uid = getAudioDeviceStringProperty(devID, selector: kAudioDevicePropertyDeviceUID) {
-                if uid.contains("VirtualMic") || uid.contains("VirtualSpeaker") { return true }
+            if let uid = getAudioDeviceStringProperty(devID, selector: kAudioDevicePropertyDeviceUID),
+               uid.contains(uidFragment) {
+                return devID
             }
         }
-        return false
+        return nil
+    }
+
+    func getSystemDefaultDevice(input: Bool) -> AudioDeviceID? {
+        var propAddr = AudioObjectPropertyAddress(
+            mSelector: input ? kAudioHardwarePropertyDefaultInputDevice : kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var deviceID: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &propAddr, 0, nil, &size, &deviceID) == noErr,
+              deviceID != 0 else { return nil }
+        return deviceID
+    }
+
+    /// Returns current system default, but nil if it's a virtual device (crash recovery safety)
+    func getNonVirtualDefaultDevice(input: Bool) -> AudioDeviceID? {
+        guard let deviceID = getSystemDefaultDevice(input: input) else { return nil }
+        let uid = getAudioDeviceStringProperty(deviceID, selector: kAudioDevicePropertyDeviceUID) ?? ""
+        if uid.contains("VirtualMic") || uid.contains("VirtualSpeaker") { return nil }
+        return deviceID
+    }
+
+    func setSystemDefaultDevice(input: Bool, deviceID: AudioDeviceID) -> Bool {
+        var propAddr = AudioObjectPropertyAddress(
+            mSelector: input ? kAudioHardwarePropertyDefaultInputDevice : kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var devID = deviceID
+        let status = AudioObjectSetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &propAddr, 0, nil,
+            UInt32(MemoryLayout<AudioDeviceID>.size), &devID)
+        if status != noErr {
+            Log.error("Failed to set system default \(input ? "input" : "output") device: \(status)")
+        }
+        return status == noErr
+    }
+
+    /// Check if VirtualMic appears as an audio device in the system
+    var virtualMicVisible: Bool {
+        findDeviceByUID("VirtualMic") != nil || findDeviceByUID("VirtualSpeaker") != nil
     }
 
     // MARK: - Audio Decoding

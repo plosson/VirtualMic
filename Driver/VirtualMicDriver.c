@@ -146,6 +146,7 @@ typedef struct {
     CFUUIDRef                           factoryUUID;
     volatile int32_t                    refCount;
 
+    AudioServerPlugInHostRef            host;
     pthread_mutex_t stateLock;
     Float64         sampleRate;
     mach_timebase_info_data_t tbInfo;
@@ -346,7 +347,8 @@ static ULONG VirtualMic_Release(void* inDriver) { (void)inDriver; return (ULONG)
 // ---------------------------------------------------------------------------
 static OSStatus VirtualMic_Initialize(AudioServerPlugInDriverRef inDriver, AudioServerPlugInHostRef inHost)
 {
-    (void)inDriver; (void)inHost;
+    (void)inDriver;
+    gDriver.host = inHost;
     SHM_OpenNamed(&gDriver.mic, VIRTUALMICDRV_SHM_NAME);
     SHM_OpenNamed(&gDriver.spk, VIRTUALSPEAKER_SHM_NAME);
     return kAudioHardwareNoError;
@@ -906,10 +908,16 @@ static OSStatus VirtualMic_GetPropertyData(AudioServerPlugInDriverRef inDriver,
             r->mMinimum = -96.0; r->mMaximum = 0.0;
             *outDataSize = sizeof(AudioValueRange); return kAudioHardwareNoError;
         }
-        case kAudioLevelControlPropertyConvertScalarToDecibels:
-        case kAudioLevelControlPropertyConvertDecibelsToScalar:
-            *(Float32*)outData = st->volume;
+        case kAudioLevelControlPropertyConvertScalarToDecibels: {
+            Float32 scalar = *(Float32*)outData;
+            *(Float32*)outData = (scalar <= 0.0f) ? -96.0f : 20.0f * log10f(scalar);
             *outDataSize = sizeof(Float32); return kAudioHardwareNoError;
+        }
+        case kAudioLevelControlPropertyConvertDecibelsToScalar: {
+            Float32 db = *(Float32*)outData;
+            *(Float32*)outData = (db <= -96.0f) ? 0.0f : powf(10.0f, db / 20.0f);
+            *outDataSize = sizeof(Float32); return kAudioHardwareNoError;
+        }
         }
     }
 
@@ -942,15 +950,25 @@ static OSStatus VirtualMic_SetPropertyData(AudioServerPlugInDriverRef inDriver,
         DeviceState* st = desc ? StateForDevice(&gDriver, desc->deviceID) : NULL;
         if (!st) return kAudioHardwareUnknownPropertyError;
 
-        if (inAddress->mSelector == kAudioLevelControlPropertyScalarValue) {
-            st->volume = *(Float32*)inData;
-            if (st->volume < 0.0f) st->volume = 0.0f;
-            if (st->volume > 1.0f) st->volume = 1.0f;
-            return kAudioHardwareNoError;
-        }
-        if (inAddress->mSelector == kAudioLevelControlPropertyDecibelValue) {
-            float db = *(Float32*)inData;
-            st->volume = (db <= -96.0f) ? 0.0f : powf(10.0f, db / 20.0f);
+        if (inAddress->mSelector == kAudioLevelControlPropertyScalarValue ||
+            inAddress->mSelector == kAudioLevelControlPropertyDecibelValue) {
+            if (inAddress->mSelector == kAudioLevelControlPropertyScalarValue) {
+                st->volume = *(Float32*)inData;
+                if (st->volume < 0.0f) st->volume = 0.0f;
+                if (st->volume > 1.0f) st->volume = 1.0f;
+            } else {
+                float db = *(Float32*)inData;
+                st->volume = (db <= -96.0f) ? 0.0f : powf(10.0f, db / 20.0f);
+            }
+
+            // Notify host of both scalar and dB changes
+            if (gDriver.host) {
+                AudioObjectPropertyAddress changed[2] = {
+                    { kAudioLevelControlPropertyScalarValue, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain },
+                    { kAudioLevelControlPropertyDecibelValue, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain }
+                };
+                gDriver.host->PropertiesChanged(gDriver.host, inObjectID, 2, changed);
+            }
             return kAudioHardwareNoError;
         }
     }

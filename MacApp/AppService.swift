@@ -67,6 +67,8 @@ class AppService: ObservableObject {
 
     private var config: AppConfig
     private var pollTimer: Timer?
+    private var originalInputDeviceID: AudioDeviceID?
+    private var originalOutputDeviceID: AudioDeviceID?
 
     // MARK: - Init
 
@@ -94,29 +96,57 @@ class AppService: ObservableObject {
         refreshSounds()
         refreshSnapshots()
 
-        // Auto-start proxy if device was previously saved
-        if let savedDevice = config.selectedDevice,
-           let device = audio.findDevice(matching: savedDevice) {
+        // Save original system defaults BEFORE any changes (skip if already virtual)
+        originalInputDeviceID = audio.getNonVirtualDefaultDevice(input: true)
+        originalOutputDeviceID = audio.getNonVirtualDefaultDevice(input: false)
+
+        // Auto-start mic proxy: saved device or system default
+        let micDevice: AudioDeviceInfo? = {
+            if let saved = config.selectedDevice,
+               let dev = audio.findDevice(matching: saved) { return dev }
+            return audio.defaultDevice(input: true)
+        }()
+        if let device = micDevice {
             selectedDevice = device.name
             do {
                 try audio.startProxy(deviceID: device.id, deviceName: device.name, volume: volume)
                 proxyRunning = true
                 proxyDeviceName = device.name
+                config.selectedDevice = device.name
             } catch {
                 Log.error("Auto-start mic proxy failed: \(error)")
             }
         }
 
-        // Auto-start speaker proxy if output device was previously saved
-        if let savedOutput = config.selectedOutputDevice,
-           let device = audio.findOutputDevice(matching: savedOutput) {
+        // Auto-start speaker proxy: saved device or system default
+        let outputDevice: AudioDeviceInfo? = {
+            if let saved = config.selectedOutputDevice,
+               let dev = audio.findOutputDevice(matching: saved) { return dev }
+            return audio.defaultDevice(input: false)
+        }()
+        if let device = outputDevice {
             selectedOutputDevice = device.name
             do {
                 try audio.startSpeakerProxy(deviceID: device.id, deviceName: device.name, bufferDuration: dashcamBufferSeconds)
                 speakerProxyRunning = true
                 speakerProxyDeviceName = device.name
+                config.selectedOutputDevice = device.name
             } catch {
                 Log.error("Auto-start speaker proxy failed: \(error)")
+            }
+        }
+
+        config.save()
+
+        // Switch system defaults to virtual devices
+        if let vmID = audio.findDeviceByUID("VirtualMic") {
+            if audio.setSystemDefaultDevice(input: true, deviceID: vmID) {
+                Log.info("System default input -> VirtualMic")
+            }
+        }
+        if let vsID = audio.findDeviceByUID("VirtualSpeaker") {
+            if audio.setSystemDefaultDevice(input: false, deviceID: vsID) {
+                Log.info("System default output -> VirtualSpeaker")
             }
         }
 
@@ -127,6 +157,19 @@ class AppService: ObservableObject {
         stopPolling()
         audio.stopProxy()
         audio.stopSpeakerProxy()
+
+        // Restore original system defaults
+        if let origIn = originalInputDeviceID {
+            if audio.setSystemDefaultDevice(input: true, deviceID: origIn) {
+                Log.info("Restored system default input")
+            }
+        }
+        if let origOut = originalOutputDeviceID {
+            if audio.setSystemDefaultDevice(input: false, deviceID: origOut) {
+                Log.info("Restored system default output")
+            }
+        }
+
         isRunning = false
         proxyRunning = false
         speakerProxyRunning = false
