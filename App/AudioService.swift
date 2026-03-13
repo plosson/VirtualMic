@@ -328,9 +328,11 @@ class MicProxy {
             speakerRing[idx] = samples[i]
             speakerWritePos += 1
         }
+        shm_memory_barrier()
     }
 
     fileprivate func dequeueSpeakerSamples(into buffer: UnsafeMutablePointer<Float>, count: Int) -> Int {
+        shm_memory_barrier()
         let avail = Int(speakerWritePos - speakerReadPos)
         let toRead = min(avail, count)
         let cap = speakerBufCapacity
