@@ -27,6 +27,8 @@ GUI_BUNDLE    = build/VirtualMic.app
 GUI_BINARY    = $(GUI_BUNDLE)/Contents/MacOS/VirtualMic
 GUI_BUNDLE_ID = com.virtualmicdrv.gui
 
+UNINSTALLER   = build/Uninstall VirtualMic.app
+
 PKG_ROOT      = build/pkg_root
 PKG_OUT       = build/VirtualMic-$(VERSION).pkg
 
@@ -51,9 +53,9 @@ SWIFTFLAGS    = -target arm64-apple-macos13.0 \
                 -O
 
 # ============================================================
-.PHONY: all driver gui sign pkg install uninstall clean test test-c test-swift
+.PHONY: all driver gui uninstaller sign pkg install uninstall clean test test-c test-swift
 
-all: driver gui
+all: driver gui uninstaller
 
 # ---- Driver bundle ----
 driver: $(DRIVER_BINARY)
@@ -94,6 +96,18 @@ $(GUI_BINARY): $(GUI_SRC) $(DRIVER_BINARY)
 	codesign --force --sign - --entitlements App/entitlements.plist $(GUI_BUNDLE)
 	@echo "✓ GUI app built → $(GUI_BUNDLE)"
 
+# ---- Uninstaller app ----
+uninstaller: $(UNINSTALLER)
+
+$(UNINSTALLER): Uninstaller/uninstall.sh Uninstaller/Info.plist
+	@mkdir -p "$(UNINSTALLER)/Contents/MacOS"
+	@mkdir -p "$(UNINSTALLER)/Contents/Resources"
+	@cp Uninstaller/uninstall.sh "$(UNINSTALLER)/Contents/MacOS/uninstall.sh"
+	@chmod +x "$(UNINSTALLER)/Contents/MacOS/uninstall.sh"
+	@cp Uninstaller/Info.plist "$(UNINSTALLER)/Contents/Info.plist"
+	@cp App/AppIcon.icns "$(UNINSTALLER)/Contents/Resources/AppIcon.icns"
+	@echo "✓ Uninstaller built → $(UNINSTALLER)"
+
 # ---- Code signing ----
 sign: all
 	codesign --force --options runtime \
@@ -109,6 +123,10 @@ sign: all
 	    --identifier $(GUI_BUNDLE_ID) \
 	    --entitlements App/entitlements.plist \
 	    $(GUI_BUNDLE)
+	codesign --force --options runtime \
+	    --sign "$(DEVID)" \
+	    --identifier com.virtualmicdrv.uninstaller \
+	    "$(UNINSTALLER)"
 	@echo "✓ Signed"
 
 # ---- Notarize (fill in your Apple ID + app-specific password) ----
@@ -130,6 +148,7 @@ pkg: sign
 	@mkdir -p $(PKG_ROOT)/Applications
 	@cp -R $(DRIVER_BUNDLE) $(PKG_ROOT)$(HAL_DIR)/
 	@cp -R $(GUI_BUNDLE)    $(PKG_ROOT)/Applications/
+	@cp -R "$(UNINSTALLER)" "$(PKG_ROOT)/Applications/"
 	pkgbuild \
 	    --root $(PKG_ROOT) \
 	    --identifier $(BUNDLE_ID) \
