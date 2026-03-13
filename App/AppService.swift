@@ -431,6 +431,12 @@ class AppService: ObservableObject {
             if self.currentlyPlaying != nil && self.injectAvailableSamples == 0 {
                 self.currentlyPlaying = nil
             }
+
+            // Stop speaker output after idle period
+            if let proxy = self.audio.proxy, proxy.idleCallbackCount > 50 {
+                proxy.stopOutputIfIdle()
+                proxy.idleCallbackCount = 0
+            }
         }
     }
 

@@ -166,6 +166,7 @@ class MicProxy {
     var audioUnit: AudioComponentInstance?
     private var outputUnit: AudioComponentInstance?
     private var outputRunning = false
+    var idleCallbackCount: Int = 0
 
     private let mixBufSize = 2048
     private var injectBuf: [Float]
@@ -306,7 +307,7 @@ class MicProxy {
         outputRunning = true
     }
 
-    fileprivate func stopOutputIfIdle() {
+    func stopOutputIfIdle() {
         guard outputRunning, let ou = outputUnit else { return }
         AudioOutputUnitStop(ou)
         outputRunning = false
@@ -611,7 +612,9 @@ private func speakerOutputCallback(
         }
     }
     if !hadData {
-        DispatchQueue.global().async { proxy.stopOutputIfIdle() }
+        proxy.idleCallbackCount += 1
+    } else {
+        proxy.idleCallbackCount = 0
     }
     return noErr
 }
