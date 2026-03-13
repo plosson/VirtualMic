@@ -270,8 +270,9 @@ static void SHM_Close(DeviceState* st) {
 }
 
 // Read `numFrames` stereo frames from ring buffer into `out` (for VirtualMic input).
-// If not enough data: fill silence.
-// If too much data buffered: skip ahead to the freshest samples to minimize latency.
+// Reads whatever is available and zero-fills the remainder to avoid dropping good data.
+// When too much data accumulates (clock drift), gradually drops evenly-spaced samples
+// instead of a hard skip to avoid audible discontinuities.
 static void SHM_Read(DeviceState* st, float* out, uint32_t numFrames)
 {
     uint32_t numSamples = numFrames * VIRTUALMICDRV_NUM_CHANNELS;
@@ -282,27 +283,51 @@ static void SHM_Read(DeviceState* st, float* out, uint32_t numFrames)
     uint64_t wp = atomic_load_explicit(&shm->writePos, memory_order_acquire);
     uint64_t avail = wp - rp;
 
-    if (avail < numSamples) {
+    uint32_t cap = shm->capacity;
+    if (cap == 0) { memset(out, 0, numSamples * sizeof(float)); return; }
+
+    if (avail == 0) {
         memset(out, 0, numSamples * sizeof(float));
         return;
     }
 
-    // Skip ahead if too much data buffered (keep only ~2 buffer periods worth)
-    uint64_t maxLag = numSamples * 2;
+    // Overrun: consumer is slower than producer — drop samples gradually.
+    // Read extra samples from the ring and spread the drops evenly so there's
+    // no audible discontinuity (unlike a hard skip which causes a pop).
+    uint64_t maxLag = numSamples * 3;
     if (avail > maxLag) {
-        rp = wp - maxLag;
-        atomic_store_explicit(&shm->readPos, rp, memory_order_release);
+        // Consume all excess + one period worth, output numSamples
+        uint64_t excess = avail - numSamples;
+        uint64_t toRead = numSamples + excess;  // consume everything available
+        // Evenly map toRead input samples → numSamples output samples
+        for (uint32_t i = 0; i < numSamples; i++) {
+            // Linear mapping: which input sample corresponds to output sample i
+            uint64_t srcIdx = (uint64_t)i * toRead / numSamples;
+            uint32_t idx = (uint32_t)((rp + srcIdx) % cap);
+            float s = shm->data[idx];
+            if (st->mute) s = 0.0f;
+            out[i] = s * st->volume;
+        }
+        atomic_store_explicit(&shm->readPos, rp + toRead, memory_order_release);
+        return;
     }
 
-    uint32_t cap = shm->capacity;
-    if (cap == 0) { memset(out, 0, numSamples * sizeof(float)); return; }
-    for (uint32_t i = 0; i < numSamples; i++) {
+    // Normal or underrun: read what's available, zero-fill the rest
+    uint64_t toRead = (avail < numSamples) ? avail : numSamples;
+    // Align to stereo frame boundary
+    toRead = (toRead / VIRTUALMICDRV_NUM_CHANNELS) * VIRTUALMICDRV_NUM_CHANNELS;
+
+    for (uint64_t i = 0; i < toRead; i++) {
         uint32_t idx = (uint32_t)((rp + i) % cap);
         float s = shm->data[idx];
         if (st->mute) s = 0.0f;
         out[i] = s * st->volume;
     }
-    atomic_store_explicit(&shm->readPos, rp + numSamples, memory_order_release);
+    // Zero-fill remainder (underrun)
+    if (toRead < numSamples) {
+        memset(out + toRead, 0, (numSamples - toRead) * sizeof(float));
+    }
+    atomic_store_explicit(&shm->readPos, rp + toRead, memory_order_release);
 }
 
 // Write `numFrames` stereo frames from apps into ring buffer (for VirtualSpeaker output).

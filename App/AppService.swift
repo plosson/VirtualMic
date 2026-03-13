@@ -120,7 +120,7 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
         if let device = micDevice {
             selectedDevice = device.name
             do {
-                try audio.startProxy(deviceID: device.id, deviceName: device.name, volume: volume)
+                try audio.startProxy(deviceID: device.id, deviceName: device.name, inputChannels: device.inputChannels, volume: volume)
                 proxyRunning = true
                 proxyDeviceName = device.name
                 config.selectedDevice = device.name
@@ -215,7 +215,7 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
             throw NSError(domain: "AppService", code: -1,
                           userInfo: [NSLocalizedDescriptionKey: "Device not found: \(deviceName)"])
         }
-        try audio.startProxy(deviceID: device.id, deviceName: device.name, volume: volume)
+        try audio.startProxy(deviceID: device.id, deviceName: device.name, inputChannels: device.inputChannels, volume: volume)
         proxyRunning = true
         proxyDeviceName = device.name
         selectedDevice = device.name

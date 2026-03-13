@@ -166,6 +166,7 @@ class MicProxy {
     let mainRing: SharedRingBuffer
     let injectRing: SharedRingBuffer
     var injectVolume: Float = 1.0
+    let isMono: Bool
 
     /// Peak levels updated from the audio callback (read from main thread for UI)
     var micPeakLevel: Float = 0.0
@@ -189,10 +190,11 @@ class MicProxy {
     private var speakerWritePos: UInt64 = 0
     private var speakerReadPos: UInt64 = 0
 
-    init(deviceID: AudioDeviceID, mainRing: SharedRingBuffer, injectRing: SharedRingBuffer) {
+    init(deviceID: AudioDeviceID, mainRing: SharedRingBuffer, injectRing: SharedRingBuffer, isMono: Bool) {
         self.deviceID = deviceID
         self.mainRing = mainRing
         self.injectRing = injectRing
+        self.isMono = isMono
         self.injectBuf = [Float](repeating: 0, count: mixBufSize)
         self.captureBuffer = UnsafeMutablePointer<Float>.allocate(capacity: rtBufCapacity)
         self.rtInjectBuffer = UnsafeMutablePointer<Float>.allocate(capacity: rtBufCapacity)
@@ -566,9 +568,11 @@ private func micInputCallback(
                                  inBusNumber, inNumberFrames, &bufferList)
     if status != noErr { return status }
 
-    // Mono mic fix
-    let frames = Int(inNumberFrames)
-    for f in 0..<frames { captureBuffer[f * 2 + 1] = captureBuffer[f * 2] }
+    // Mono mic fix: duplicate left channel to right only for mono devices
+    if proxy.isMono {
+        let frames = Int(inNumberFrames)
+        for f in 0..<frames { captureBuffer[f * 2 + 1] = captureBuffer[f * 2] }
+    }
 
     // Compute mic peak level
     var micPeak: Float = 0.0
@@ -727,13 +731,13 @@ class AudioService {
 
     var isProxyRunning: Bool { proxy != nil }
 
-    func startProxy(deviceID: AudioDeviceID, deviceName: String, volume: Float = 1.0) throws {
+    func startProxy(deviceID: AudioDeviceID, deviceName: String, inputChannels: Int, volume: Float = 1.0) throws {
         guard let mainRing = mainRing, let injectRing = injectRing else {
             throw NSError(domain: "AudioService", code: -1,
                           userInfo: [NSLocalizedDescriptionKey: "Ring buffers not initialized"])
         }
         stopProxy()
-        let p = MicProxy(deviceID: deviceID, mainRing: mainRing, injectRing: injectRing)
+        let p = MicProxy(deviceID: deviceID, mainRing: mainRing, injectRing: injectRing, isMono: inputChannels <= 1)
         p.injectVolume = volume
         try p.start()
         proxy = p
