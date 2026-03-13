@@ -134,8 +134,8 @@ typedef struct {
     UInt32         ioRunning;
     Float32        volume;
     Boolean        mute;
-    uint64_t       anchorHostTime;
-    uint64_t       anchorSampleTime;
+    _Atomic uint64_t anchorHostTime;
+    _Atomic uint64_t anchorSampleTime;
 } DeviceState;
 
 // ---------------------------------------------------------------------------
@@ -148,7 +148,7 @@ typedef struct {
 
     AudioServerPlugInHostRef            host;
     pthread_mutex_t stateLock;
-    Float64         sampleRate;
+    _Atomic double  sampleRate;
     mach_timebase_info_data_t tbInfo;
 
     DeviceState     mic;
@@ -939,7 +939,7 @@ static OSStatus VirtualMic_SetPropertyData(AudioServerPlugInDriverRef inDriver,
     if (IsDevice(inObjectID)) {
         if (inAddress->mSelector == kAudioDevicePropertyNominalSampleRate) {
             pthread_mutex_lock(&gDriver.stateLock);
-            gDriver.sampleRate = *(Float64*)inData;
+            atomic_store_explicit(&gDriver.sampleRate, *(Float64*)inData, memory_order_release);
             pthread_mutex_unlock(&gDriver.stateLock);
             return kAudioHardwareNoError;
         }
@@ -989,8 +989,8 @@ static OSStatus VirtualMic_StartIO(AudioServerPlugInDriverRef inDriver,
 
     pthread_mutex_lock(&gDriver.stateLock);
     if (st->ioRunning == 0) {
-        st->anchorHostTime   = mach_absolute_time();
-        st->anchorSampleTime = 0;
+        atomic_store_explicit(&st->anchorHostTime, mach_absolute_time(), memory_order_release);
+        atomic_store_explicit(&st->anchorSampleTime, 0, memory_order_release);
         SHM_OpenNamed(st, desc->shmName);
     }
     st->ioRunning++;
@@ -1022,24 +1022,24 @@ static OSStatus VirtualMic_GetZeroTimeStamp(AudioServerPlugInDriverRef inDriver,
     DeviceState* st = StateForDevice(&gDriver, inDeviceObjectID);
     if (!st) return kAudioHardwareBadDeviceError;
 
-    pthread_mutex_lock(&gDriver.stateLock);
+    uint64_t anchor = atomic_load_explicit(&st->anchorHostTime, memory_order_acquire);
+    double sr = atomic_load_explicit(&gDriver.sampleRate, memory_order_relaxed);
 
-    uint64_t now  = mach_absolute_time();
-    uint64_t elapsed = now - st->anchorHostTime;
-    uint64_t elapsedNs = elapsed * gDriver.tbInfo.numer / gDriver.tbInfo.denom;
-    uint64_t elapsedFrames = (uint64_t)((double)elapsedNs * gDriver.sampleRate / 1e9);
+    uint64_t now = mach_absolute_time();
+    uint64_t elapsed = now - anchor;
+    double elapsedNs = (double)elapsed * (double)gDriver.tbInfo.numer / (double)gDriver.tbInfo.denom;
+    uint64_t elapsedFrames = (uint64_t)(elapsedNs * sr / 1e9);
 
     uint64_t period = VIRTUALMICDRV_BUFFER_FRAMES;
     uint64_t currentPeriod = elapsedFrames / period;
 
     *outSampleTime = (Float64)(currentPeriod * period);
-    double nsPerPeriod = (double)period / gDriver.sampleRate * 1e9;
+    double nsPerPeriod = (double)period / sr * 1e9;
     uint64_t nsForPeriod = (uint64_t)((double)currentPeriod * nsPerPeriod);
-    uint64_t ticksForPeriod = nsForPeriod * gDriver.tbInfo.denom / gDriver.tbInfo.numer;
-    *outHostTime = st->anchorHostTime + ticksForPeriod;
+    uint64_t ticksForPeriod = (uint64_t)((double)nsForPeriod * (double)gDriver.tbInfo.denom / (double)gDriver.tbInfo.numer);
+    *outHostTime = anchor + ticksForPeriod;
     *outSeed = 1;
 
-    pthread_mutex_unlock(&gDriver.stateLock);
     return kAudioHardwareNoError;
 }
 
