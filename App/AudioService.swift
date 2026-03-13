@@ -77,11 +77,18 @@ class SharedRingBuffer {
         let cap = capacity
         let rawHeader = UnsafeMutableRawPointer(header)
         var written = 0
+        var retries = 0
         while written < count {
             let wp = shm_load_write_pos(rawHeader)
             let rp = shm_load_read_pos(rawHeader)
             let avail = cap - Int(wp - rp)
-            if avail <= 0 { sched_yield(); continue }
+            if avail <= 0 {
+                retries += 1
+                if retries > 50 { return }  // consumer not reading — drop remaining
+                sched_yield()
+                continue
+            }
+            retries = 0
             let chunk = min(avail, count - written)
             for i in 0..<chunk {
                 let idx = Int((wp + UInt64(i)) % UInt64(cap))
@@ -514,13 +521,7 @@ private func speakerProxyRenderCallback(
     if read > 0 {
         proxy.rollingBuffer.append(proxy.readBuf, count: read)
 
-        // Compute peak level
-        var peak: Float = 0.0
-        for i in 0..<read {
-            let v = abs(proxy.readBuf[i])
-            if v > peak { peak = v }
-        }
-        proxy.speakerPeakLevel = peak
+        proxy.speakerPeakLevel = audioPeakLevel(proxy.readBuf, count: read)
     } else {
         proxy.speakerPeakLevel = 0.0
     }
@@ -570,32 +571,20 @@ private func micInputCallback(
 
     // Mono mic fix: duplicate left channel to right only for mono devices
     if proxy.isMono {
-        let frames = Int(inNumberFrames)
-        for f in 0..<frames { captureBuffer[f * 2 + 1] = captureBuffer[f * 2] }
+        monoToStereo(captureBuffer, frames: Int(inNumberFrames))
     }
 
     // Compute mic peak level
-    var micPeak: Float = 0.0
-    for i in 0..<numSamples {
-        let v = abs(captureBuffer[i])
-        if v > micPeak { micPeak = v }
-    }
-    proxy.micPeakLevel = micPeak
+    proxy.micPeakLevel = audioPeakLevel(captureBuffer, count: numSamples)
 
     // Read + mix inject audio
     let injectBuffer = proxy.rtInjectBuffer
     let injectCount = proxy.injectRing.read(into: injectBuffer, maxSamples: numSamples)
 
     if injectCount > 0 {
-        let vol = proxy.injectVolume
-        var injPeak: Float = 0.0
-        for i in 0..<injectCount {
-            injectBuffer[i] *= vol
-            let v = abs(injectBuffer[i])
-            if v > injPeak { injPeak = v }
-            captureBuffer[i] = min(1.0, max(-1.0, captureBuffer[i] + injectBuffer[i]))
-        }
-        proxy.injectPeakLevel = injPeak
+        proxy.injectPeakLevel = applyInjectMix(
+            capture: captureBuffer, inject: injectBuffer,
+            count: injectCount, volume: proxy.injectVolume)
         proxy.enqueueSpeakerSamples(injectBuffer, count: injectCount)
         proxy.ensureOutputRunning()
     } else {

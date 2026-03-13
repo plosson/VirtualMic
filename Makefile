@@ -22,7 +22,7 @@ DRIVER_BUNDLE = build/VirtualMic.driver
 DRIVER_BINARY = $(DRIVER_BUNDLE)/Contents/MacOS/VirtualMicDriver
 DRIVER_PLIST  = Driver/VirtualMic.driver/Contents/Info.plist
 
-GUI_SRC       = App/VirtualMicGUI.swift App/Log.swift App/AppService.swift App/AudioService.swift App/ContentView.swift
+GUI_SRC       = App/VirtualMicGUI.swift App/Log.swift App/AppService.swift App/AudioService.swift App/AudioMixing.swift App/ContentView.swift
 GUI_BUNDLE    = build/VirtualMic.app
 GUI_BINARY    = $(GUI_BUNDLE)/Contents/MacOS/VirtualMic
 GUI_BUNDLE_ID = com.virtualmicdrv.gui
@@ -53,7 +53,7 @@ SWIFTFLAGS    = -target arm64-apple-macos13.0 \
                 -O
 
 # ============================================================
-.PHONY: all driver gui uninstaller sign pkg install uninstall clean test test-c test-swift
+.PHONY: all driver gui uninstaller sign pkg install uninstall clean test test-c test-swift test-audio test-webrtc
 
 all: driver gui uninstaller
 
@@ -191,15 +191,24 @@ test-c: Tests/test_driver.c
 	@echo "--- C driver tests ---"
 	./build/test_driver
 
-test-swift: Tests/test_app.swift App/shm_bridge.h
+test-swift: Tests/test_app.swift App/shm_bridge.h App/AudioMixing.swift
 	@mkdir -p build
 	$(SWIFTC) $(SWIFTFLAGS) \
 	    -parse-as-library \
 	    -import-objc-header App/shm_bridge.h \
 	    -o build/test_app \
-	    Tests/test_app.swift
+	    Tests/test_app.swift App/AudioMixing.swift
 	@echo "--- Swift app tests ---"
 	./build/test_app
+
+test-audio: Tests/tone_injector.c Tests/test_audio.mjs
+	@mkdir -p build
+	node Tests/test_audio.mjs
+
+test-webrtc: Tests/tone_injector.c Tests/webrtc_loopback.html Tests/test_webrtc.mjs
+	@mkdir -p build
+	@cd "$(CURDIR)" && npm ls playwright >/dev/null 2>&1 || npm install playwright
+	node Tests/test_webrtc.mjs
 
 clean:
 	rm -rf build .build

@@ -1,0 +1,14 @@
+#!/bin/bash
+# preinstall — runs before pkg installation
+# Ensures the old app is not running during the update.
+
+set -e
+
+# Kill VirtualMic app if running (old binary would hold stale SHM mappings)
+killall VirtualMic 2>/dev/null || true
+
+# Give it a moment to release resources
+sleep 1
+
+echo "Pre-install cleanup complete."
+exit 0

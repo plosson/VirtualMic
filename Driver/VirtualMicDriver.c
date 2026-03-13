@@ -12,6 +12,7 @@
 #include <stdatomic.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <math.h>
@@ -27,6 +28,7 @@
 #define VIRTUALMICDRV_SAMPLE_RATE    48000.0
 #define VIRTUALMICDRV_NUM_CHANNELS   2
 #define VIRTUALMICDRV_BUFFER_FRAMES  512
+#define VIRTUALMICDRV_SAFETY_OFFSET  64     // frames of breathing room for producer (~1.3ms at 48kHz)
 
 // Ring buffer header lives at the start of the shared memory region.
 typedef struct {
@@ -232,17 +234,32 @@ static VirtualMicDriver gDriver = {
 // ---------------------------------------------------------------------------
 // Shared memory helpers
 // ---------------------------------------------------------------------------
+static void SHM_Close(DeviceState* st);  // forward decl
+
 static void SHM_OpenNamed(DeviceState* st, const char* name)
 {
-    if (st->shm) return;  // already mapped
-
     size_t sz = sizeof(VirtualMicSHM) + VIRTUALMICDRV_SHM_SIZE;
-    st->shmFd = shm_open(name, O_RDWR, 0666);
-    if (st->shmFd < 0) {
-        st->shmFd = shm_open(name, O_RDWR | O_CREAT, 0666);
-        if (st->shmFd < 0) return;
-        ftruncate(st->shmFd, (off_t)sz);
+
+    int newFd = shm_open(name, O_RDWR, 0666);
+    if (newFd < 0) {
+        if (st->shm) return;  // SHM doesn't exist yet, keep existing mapping
+        newFd = shm_open(name, O_RDWR | O_CREAT, 0666);
+        if (newFd < 0) return;
+        ftruncate(newFd, (off_t)sz);
     }
+
+    if (st->shm) {
+        // Check if our fd still points to the current segment.
+        struct stat oldStat, newStat;
+        if (fstat(st->shmFd, &oldStat) == 0 && fstat(newFd, &newStat) == 0 &&
+            oldStat.st_ino == newStat.st_ino) {
+            close(newFd);  // same segment, keep existing mapping
+            return;
+        }
+        SHM_Close(st);  // different segment, remap below
+    }
+
+    st->shmFd = newFd;
 
     void* m = mmap(NULL, sz, PROT_READ | PROT_WRITE, MAP_SHARED, st->shmFd, 0);
     if (m == MAP_FAILED) { close(st->shmFd); st->shmFd = -1; return; }
@@ -272,7 +289,12 @@ static void SHM_Close(DeviceState* st) {
 // Read `numFrames` stereo frames from ring buffer into `out` (for VirtualMic input).
 // Reads whatever is available and zero-fills the remainder to avoid dropping good data.
 // When too much data accumulates (clock drift), gradually drops evenly-spaced samples
-// instead of a hard skip to avoid audible discontinuities.
+// Handles all cases with a single resample loop:
+//   - Normal (avail == needed):   1:1 copy
+//   - Overrun (avail >> needed):  compress (skip samples to catch up)
+//   - Partial underrun (0 < avail < needed): stretch (repeat samples)
+//   - Complete underrun (avail == 0): output silence
+//   - Producer lap (avail > cap): skip ahead to valid data
 static void SHM_Read(DeviceState* st, float* out, uint32_t numFrames)
 {
     uint32_t numSamples = numFrames * VIRTUALMICDRV_NUM_CHANNELS;
@@ -286,48 +308,40 @@ static void SHM_Read(DeviceState* st, float* out, uint32_t numFrames)
     uint32_t cap = shm->capacity;
     if (cap == 0) { memset(out, 0, numSamples * sizeof(float)); return; }
 
-    if (avail == 0) {
-        memset(out, 0, numSamples * sizeof(float));
-        return;
+    // Producer lapped us — our data is gone. Skip ahead to valid region.
+    if (avail > cap) {
+        rp = wp - cap / 2;
+        avail = wp - rp;
     }
 
-    // Overrun: consumer is slower than producer — drop samples gradually.
-    // Read extra samples from the ring and spread the drops evenly so there's
-    // no audible discontinuity (unlike a hard skip which causes a pop).
+    if (avail == 0) { memset(out, 0, numSamples * sizeof(float)); return; }
+
+    // Determine how many samples to consume.
     uint64_t maxLag = numSamples * 3;
-    if (avail > maxLag) {
-        // Consume all excess + one period worth, output numSamples
-        uint64_t excess = avail - numSamples;
-        uint64_t toRead = numSamples + excess;  // consume everything available
-        // Evenly map toRead input samples → numSamples output samples
-        for (uint32_t i = 0; i < numSamples; i++) {
-            // Linear mapping: which input sample corresponds to output sample i
-            uint64_t srcIdx = (uint64_t)i * toRead / numSamples;
-            uint32_t idx = (uint32_t)((rp + srcIdx) % cap);
+    uint64_t toConsume;
+    if (avail > maxLag)
+        toConsume = avail;          // overrun: drain all excess
+    else if (avail >= numSamples)
+        toConsume = numSamples;     // normal: 1:1
+    else
+        toConsume = avail;          // partial underrun: stretch
+
+    // Align to stereo frame boundary
+    toConsume = (toConsume / VIRTUALMICDRV_NUM_CHANNELS) * VIRTUALMICDRV_NUM_CHANNELS;
+    if (toConsume == 0) { memset(out, 0, numSamples * sizeof(float)); return; }
+
+    // Resample: map toConsume input frames → numFrames output frames.
+    uint32_t toConsumeFrames = (uint32_t)(toConsume / VIRTUALMICDRV_NUM_CHANNELS);
+    for (uint32_t f = 0; f < numFrames; f++) {
+        uint32_t srcFrame = (uint32_t)((uint64_t)f * toConsumeFrames / numFrames);
+        for (uint32_t ch = 0; ch < VIRTUALMICDRV_NUM_CHANNELS; ch++) {
+            uint32_t idx = (uint32_t)((rp + srcFrame * VIRTUALMICDRV_NUM_CHANNELS + ch) % cap);
             float s = shm->data[idx];
             if (st->mute) s = 0.0f;
-            out[i] = s * st->volume;
+            out[f * VIRTUALMICDRV_NUM_CHANNELS + ch] = s * st->volume;
         }
-        atomic_store_explicit(&shm->readPos, rp + toRead, memory_order_release);
-        return;
     }
-
-    // Normal or underrun: read what's available, zero-fill the rest
-    uint64_t toRead = (avail < numSamples) ? avail : numSamples;
-    // Align to stereo frame boundary
-    toRead = (toRead / VIRTUALMICDRV_NUM_CHANNELS) * VIRTUALMICDRV_NUM_CHANNELS;
-
-    for (uint64_t i = 0; i < toRead; i++) {
-        uint32_t idx = (uint32_t)((rp + i) % cap);
-        float s = shm->data[idx];
-        if (st->mute) s = 0.0f;
-        out[i] = s * st->volume;
-    }
-    // Zero-fill remainder (underrun)
-    if (toRead < numSamples) {
-        memset(out + toRead, 0, (numSamples - toRead) * sizeof(float));
-    }
-    atomic_store_explicit(&shm->readPos, rp + toRead, memory_order_release);
+    atomic_store_explicit(&shm->readPos, rp + toConsume, memory_order_release);
 }
 
 // Write `numFrames` stereo frames from apps into ring buffer (for VirtualSpeaker output).
@@ -777,7 +791,7 @@ static OSStatus VirtualMic_GetPropertyData(AudioServerPlugInDriverRef inDriver,
             *(AudioObjectID*)outData = desc->deviceID;
             *outDataSize = sizeof(AudioObjectID); return kAudioHardwareNoError;
         case kAudioDevicePropertyClockDomain:
-            *(UInt32*)outData = 0;
+            *(UInt32*)outData = desc->deviceID;  // unique domain per device (not 0 = built-in)
             *outDataSize = sizeof(UInt32); return kAudioHardwareNoError;
         case kAudioDevicePropertyDeviceIsAlive:
             *(UInt32*)outData = 1;
@@ -795,7 +809,7 @@ static OSStatus VirtualMic_GetPropertyData(AudioServerPlugInDriverRef inDriver,
             *(UInt32*)outData = 0;
             *outDataSize = sizeof(UInt32); return kAudioHardwareNoError;
         case kAudioDevicePropertySafetyOffset:
-            *(UInt32*)outData = 0;
+            *(UInt32*)outData = VIRTUALMICDRV_SAFETY_OFFSET;
             *outDataSize = sizeof(UInt32); return kAudioHardwareNoError;
         case kAudioDevicePropertyIsHidden:
             *(UInt32*)outData = 0;
@@ -1075,6 +1089,7 @@ static OSStatus VirtualMic_GetZeroTimeStamp(AudioServerPlugInDriverRef inDriver,
     uint64_t currentPeriod = elapsedFrames / period;
 
     *outSampleTime = (Float64)(currentPeriod * period);
+    // Map the period boundary back to host time using nominal rate
     double nsPerPeriod = (double)period / sr * 1e9;
     uint64_t nsForPeriod = (uint64_t)((double)currentPeriod * nsPerPeriod);
     uint64_t ticksForPeriod = (uint64_t)((double)nsForPeriod * (double)gDriver.tbInfo.denom / (double)gDriver.tbInfo.numer);

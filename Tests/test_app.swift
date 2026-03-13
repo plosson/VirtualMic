@@ -452,6 +452,101 @@ func test_all_zeros_roundtrip() {
 }
 
 // ---------------------------------------------------------------------------
+// Audio mixing tests (AudioMixing.swift)
+// ---------------------------------------------------------------------------
+
+func test_audioPeakLevel_basic() {
+    let buf: [Float] = [0.1, -0.5, 0.3, -0.2]
+    let peak = buf.withUnsafeBufferPointer { audioPeakLevel($0.baseAddress!, count: 4) }
+    assert(abs(peak - 0.5) < 1e-6, "Expected 0.5, got \(peak)")
+}
+
+func test_audioPeakLevel_zeros() {
+    let buf = [Float](repeating: 0, count: 128)
+    let peak = buf.withUnsafeBufferPointer { audioPeakLevel($0.baseAddress!, count: 128) }
+    assert(peak == 0.0, "Expected 0.0, got \(peak)")
+}
+
+func test_audioPeakLevel_negative() {
+    let buf: [Float] = [-0.9, -0.1, -0.5]
+    let peak = buf.withUnsafeBufferPointer { audioPeakLevel($0.baseAddress!, count: 3) }
+    assert(abs(peak - 0.9) < 1e-6, "Expected 0.9, got \(peak)")
+}
+
+func test_applyInjectMix_basic() {
+    var capture: [Float] = [0.2, 0.3, -0.1, 0.0]
+    var inject:  [Float] = [0.1, 0.2,  0.3, 0.4]
+    let injectPeak = capture.withUnsafeMutableBufferPointer { capPtr in
+        inject.withUnsafeMutableBufferPointer { injPtr in
+            applyInjectMix(capture: capPtr.baseAddress!, inject: injPtr.baseAddress!, count: 4, volume: 1.0)
+        }
+    }
+    // capture should be capture + inject
+    assert(abs(capture[0] - 0.3) < 1e-6)
+    assert(abs(capture[1] - 0.5) < 1e-6)
+    assert(abs(capture[2] - 0.2) < 1e-6)
+    assert(abs(capture[3] - 0.4) < 1e-6)
+    assert(abs(injectPeak - 0.4) < 1e-6)
+}
+
+func test_applyInjectMix_clipping() {
+    var capture: [Float] = [0.8, -0.9]
+    var inject:  [Float] = [0.5, -0.5]
+    _ = capture.withUnsafeMutableBufferPointer { capPtr in
+        inject.withUnsafeMutableBufferPointer { injPtr in
+            applyInjectMix(capture: capPtr.baseAddress!, inject: injPtr.baseAddress!, count: 2, volume: 1.0)
+        }
+    }
+    // 0.8 + 0.5 = 1.3 → clipped to 1.0
+    assert(capture[0] == 1.0, "Expected 1.0, got \(capture[0])")
+    // -0.9 + -0.5 = -1.4 → clipped to -1.0
+    assert(capture[1] == -1.0, "Expected -1.0, got \(capture[1])")
+}
+
+func test_applyInjectMix_volume() {
+    var capture: [Float] = [0.0, 0.0]
+    var inject:  [Float] = [1.0, -1.0]
+    let peak = capture.withUnsafeMutableBufferPointer { capPtr in
+        inject.withUnsafeMutableBufferPointer { injPtr in
+            applyInjectMix(capture: capPtr.baseAddress!, inject: injPtr.baseAddress!, count: 2, volume: 0.5)
+        }
+    }
+    // inject scaled by 0.5 → [0.5, -0.5], mixed into capture [0,0] → [0.5, -0.5]
+    assert(abs(capture[0] - 0.5) < 1e-6)
+    assert(abs(capture[1] - (-0.5)) < 1e-6)
+    // inject buffer should contain volume-scaled values (for speaker output)
+    assert(abs(inject[0] - 0.5) < 1e-6)
+    assert(abs(inject[1] - (-0.5)) < 1e-6)
+    assert(abs(peak - 0.5) < 1e-6)
+}
+
+func test_applyInjectMix_zero_volume() {
+    var capture: [Float] = [0.3, -0.2]
+    var inject:  [Float] = [1.0, -1.0]
+    let peak = capture.withUnsafeMutableBufferPointer { capPtr in
+        inject.withUnsafeMutableBufferPointer { injPtr in
+            applyInjectMix(capture: capPtr.baseAddress!, inject: injPtr.baseAddress!, count: 2, volume: 0.0)
+        }
+    }
+    // Volume 0 → inject zeroed, capture unchanged
+    assert(abs(capture[0] - 0.3) < 1e-6)
+    assert(abs(capture[1] - (-0.2)) < 1e-6)
+    assert(peak == 0.0)
+}
+
+func test_monoToStereo() {
+    // 3 frames of stereo: [L0, R0, L1, R1, L2, R2]
+    var buf: [Float] = [0.5, 0.0, -0.3, 0.0, 0.9, 0.0]
+    buf.withUnsafeMutableBufferPointer { ptr in
+        monoToStereo(ptr.baseAddress!, frames: 3)
+    }
+    // Right channel should equal left channel
+    assert(buf[1] == buf[0], "R0 should equal L0")
+    assert(buf[3] == buf[2], "R1 should equal L1")
+    assert(buf[5] == buf[4], "R2 should equal L2")
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 @main struct TestApp {
@@ -494,6 +589,16 @@ func test_all_zeros_roundtrip() {
 
         // Adversarial — state transitions
         runTest("test_rapid_clear_during_writes", test_rapid_clear_during_writes)
+
+        // Audio mixing (AudioMixing.swift)
+        runTest("test_audioPeakLevel_basic", test_audioPeakLevel_basic)
+        runTest("test_audioPeakLevel_zeros", test_audioPeakLevel_zeros)
+        runTest("test_audioPeakLevel_negative", test_audioPeakLevel_negative)
+        runTest("test_applyInjectMix_basic", test_applyInjectMix_basic)
+        runTest("test_applyInjectMix_clipping", test_applyInjectMix_clipping)
+        runTest("test_applyInjectMix_volume", test_applyInjectMix_volume)
+        runTest("test_applyInjectMix_zero_volume", test_applyInjectMix_zero_volume)
+        runTest("test_monoToStereo", test_monoToStereo)
 
         print("\n\(testsPassed)/\(testsRun) tests passed")
         if testsPassed != testsRun { exit(1) }
