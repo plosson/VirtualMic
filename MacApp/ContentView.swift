@@ -35,20 +35,20 @@ struct ContentView: View {
                     Group {
                         switch selectedTab {
                         case 0: soundsTab
-                        case 1: dashcamTab
-                        case 2: settingsTab
+                        case 1: settingsTab
                         default: soundsTab
                         }
                     }
                     .padding(20)
                 }
 
-                // Signal levels footer (sounds tab only)
+                // Signal levels footer
                 if selectedTab == 0 {
                     Divider().background(Theme.cardBorder)
                     HStack(spacing: 16) {
                         levelMeter(label: "Mic Input", level: app.micPeakLevel, color: Theme.purple)
                         levelMeter(label: "Inject Audio", level: app.injectPeakLevel, color: Theme.accent)
+                        levelMeter(label: "Speaker Output", level: app.speakerPeakLevel, color: Theme.purple)
                     }
                     .padding(.horizontal, 20)
                     .padding(.vertical, 10)
@@ -197,8 +197,7 @@ struct ContentView: View {
     private var tabBar: some View {
         HStack(spacing: 0) {
             tabButton("Sounds", icon: "music.note.list", index: 0)
-            tabButton("Dashcam", icon: "record.circle", index: 1)
-            tabButton("Settings", icon: "gearshape.fill", index: 2)
+            tabButton("Settings", icon: "gearshape.fill", index: 1)
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
@@ -230,88 +229,125 @@ struct ContentView: View {
 
     private var soundsTab: some View {
         VStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 8) {
-                    Button {
-                        app.refreshSounds()
-                        showToast("Sounds refreshed")
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.clockwise")
-                            Text("Refresh")
-                        }
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(Theme.accent)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(Theme.accent.opacity(0.12))
-                        .cornerRadius(6)
-                    }
-                    .buttonStyle(.plain)
+            // INJECT section
+            card {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 8) {
+                        cardTitle("Inject", icon: "music.note.list")
 
-                    if app.currentlyPlaying != nil {
+                        Spacer()
+
                         Button {
-                            app.stopPlayback()
-                            showToast("Stopped")
+                            app.refreshSounds()
+                            showToast("Sounds refreshed")
                         } label: {
                             HStack(spacing: 4) {
-                                Image(systemName: "stop.fill")
-                                Text("Stop")
+                                Image(systemName: "arrow.clockwise")
+                                Text("Refresh")
                             }
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(.red)
+                            .foregroundColor(Theme.accent)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
-                            .background(Color.red.opacity(0.12))
+                            .background(Theme.accent.opacity(0.12))
                             .cornerRadius(6)
+                        }
+                        .buttonStyle(.plain)
+
+                        if app.currentlyPlaying != nil {
+                            Button {
+                                app.stopPlayback()
+                                showToast("Stopped")
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "stop.fill")
+                                    Text("Stop")
+                                }
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.red)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.red.opacity(0.12))
+                                .cornerRadius(6)
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        Button {
+                            if !app.soundsDir.isEmpty {
+                                NSWorkspace.shared.open(URL(fileURLWithPath: app.soundsDir))
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "folder.fill")
+                                Text("Open Folder")
+                            }
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(Theme.dimText)
                         }
                         .buttonStyle(.plain)
                     }
 
-                    Spacer()
+                    if app.sounds.isEmpty {
+                        HStack {
+                            Spacer()
+                            VStack(spacing: 8) {
+                                Image(systemName: "music.note")
+                                    .font(.system(size: 20, weight: .light))
+                                    .foregroundColor(Theme.dimText)
+                                Text("No sounds yet — drop audio files in your sounds folder")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(Theme.dimText)
+                            }
+                            .padding(.vertical, 12)
+                            Spacer()
+                        }
+                    } else {
+                        LazyVGrid(columns: [
+                            GridItem(.flexible(), spacing: 10),
+                            GridItem(.flexible(), spacing: 10)
+                        ], spacing: 10) {
+                            ForEach(app.sounds, id: \.self) { name in
+                                soundCard(name: name)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // CAPTURE section
+            card {
+                VStack(alignment: .leading, spacing: 12) {
+                    cardTitle("Capture", icon: "record.circle")
 
                     Button {
-                        if !app.soundsDir.isEmpty {
-                            NSWorkspace.shared.open(URL(fileURLWithPath: app.soundsDir))
+                        let result = app.saveDashcamSnapshot()
+                        if let url = result.url {
+                            showToast("Saved: \(url.lastPathComponent)")
+                        } else {
+                            showToast("Snapshot failed: \(result.error ?? "unknown error")")
                         }
                     } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "folder.fill")
-                            Text("Open Folder")
+                        HStack(spacing: 8) {
+                            Image(systemName: "camera.fill")
+                                .font(.system(size: 13))
+                            Text("Save Snapshot (\(Int(app.dashcamBufferSeconds))s)")
+                                .font(.system(size: 12, weight: .semibold))
                         }
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(Theme.dimText)
+                        .foregroundColor(app.speakerProxyRunning ? Theme.bg : Theme.dimText)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(app.speakerProxyRunning ? Theme.accent : Color.white.opacity(0.05))
+                        .cornerRadius(8)
                     }
                     .buttonStyle(.plain)
-                }
+                    .disabled(!app.speakerProxyRunning)
 
-                if app.sounds.isEmpty {
-                    VStack(spacing: 16) {
-                        Spacer()
-                        ZStack {
-                            Circle()
-                                .fill(Theme.cardBg)
-                                .frame(width: 64, height: 64)
-                            Image(systemName: "music.note")
-                                .font(.system(size: 26, weight: .light))
-                                .foregroundColor(Theme.dimText)
-                        }
-                        Text("No sounds yet")
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundColor(Theme.bodyText)
-                        Text("Drop audio files in your sounds folder")
-                            .font(.system(size: 12))
-                            .foregroundColor(Theme.dimText)
-                        Spacer()
-                    }
-                    .frame(maxWidth: .infinity)
-                } else {
-                    LazyVGrid(columns: [
-                        GridItem(.flexible(), spacing: 10),
-                        GridItem(.flexible(), spacing: 10)
-                    ], spacing: 10) {
-                        ForEach(app.sounds, id: \.self) { name in
-                            soundCard(name: name)
+                    if !app.recentSnapshots.isEmpty {
+                        VStack(spacing: 6) {
+                            ForEach(app.recentSnapshots, id: \.absoluteString) { url in
+                                snapshotRow(url: url)
+                            }
                         }
                     }
                 }
@@ -371,118 +407,62 @@ struct ContentView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Dashcam Tab
+    private func snapshotRow(url: URL) -> some View {
+        let isPlaying = app.playingSnapshot == url
+        let displayName = (url.lastPathComponent as NSString).deletingPathExtension
 
-    private var dashcamTab: some View {
-        VStack(spacing: 16) {
-            // Description
-            card {
-                VStack(alignment: .leading, spacing: 8) {
-                    cardTitle("Audio Dashcam", icon: "record.circle")
-                    Text("Route system audio through VirtualSpeaker to a real output device (select in header bar). A rolling buffer continuously records the last \(Int(app.dashcamBufferSeconds)) seconds for instant replay snapshots.")
-                        .font(.system(size: 11))
-                        .foregroundColor(Theme.dimText)
-                }
+        return HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isPlaying ? Theme.accent.opacity(0.2) : Theme.purple.opacity(0.15))
+                    .frame(width: 32, height: 32)
+                Image(systemName: isPlaying ? "waveform" : "record.circle")
+                    .font(.system(size: 13))
+                    .foregroundColor(isPlaying ? Theme.accent : Theme.purple)
             }
 
-            // Buffer duration + signal meter
-            HStack(alignment: .top, spacing: 12) {
-                card {
-                    VStack(alignment: .leading, spacing: 10) {
-                        cardTitle("Buffer Duration", icon: "clock.fill")
-                        HStack(spacing: 10) {
-                            Text("\(Int(app.dashcamBufferSeconds))s")
-                                .font(.system(size: 12, design: .monospaced))
-                                .foregroundColor(Theme.bodyText)
-                                .frame(width: 30, alignment: .trailing)
-                            Slider(value: $app.dashcamBufferSeconds, in: 1...30, step: 1) { editing in
-                                if !editing { app.setDashcamBufferSeconds(app.dashcamBufferSeconds) }
-                            }
-                            .tint(Theme.accent)
-                        }
-                        Text("Rolling buffer of the last \(Int(app.dashcamBufferSeconds)) seconds of audio. Changing restarts the proxy.")
-                            .font(.system(size: 10))
-                            .foregroundColor(Theme.dimText)
-                    }
-                }
+            Text(displayName)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(Theme.bodyText)
+                .lineLimit(1)
 
-                card {
-                    VStack(alignment: .leading, spacing: 10) {
-                        cardTitle("Signal Level", icon: "waveform")
-                        levelMeter(label: "Speaker Output", level: app.speakerPeakLevel, color: Theme.purple)
-                        HStack {
-                            Circle()
-                                .fill(app.speakerProxyRunning ? Theme.accent : Color.red)
-                                .frame(width: 8, height: 8)
-                            Text(app.speakerProxyRunning ? "Monitoring" : "Inactive")
-                                .font(.system(size: 11))
-                                .foregroundColor(Theme.dimText)
-                            Spacer()
-                        }
-                    }
-                }
+            Spacer()
+
+            Button {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } label: {
+                Image(systemName: "folder")
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.dimText)
+                    .frame(width: 26, height: 26)
+                    .background(Color.white.opacity(0.04))
+                    .cornerRadius(6)
             }
+            .buttonStyle(.plain)
+            .help("Show in Finder")
 
-            // Snapshot button
-            card {
-                VStack(spacing: 14) {
-                    Button {
-                        let result = app.saveDashcamSnapshot()
-                        if let url = result.url {
-                            showToast("Saved: \(url.lastPathComponent)")
-                        } else {
-                            showToast("Snapshot failed: \(result.error ?? "unknown error")")
-                        }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "camera.fill")
-                                .font(.system(size: 14))
-                            Text("Save Snapshot")
-                                .font(.system(size: 13, weight: .semibold))
-                        }
-                        .foregroundColor(app.speakerProxyRunning ? Theme.bg : Theme.dimText)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(app.speakerProxyRunning ? Theme.accent : Color.white.opacity(0.05))
-                        .cornerRadius(10)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!app.speakerProxyRunning)
-
-                    if let url = app.lastSnapshotURL {
-                        HStack(spacing: 8) {
-                            Image(systemName: "doc.fill")
-                                .font(.system(size: 10))
-                                .foregroundColor(Theme.accent)
-                            Text(url.lastPathComponent)
-                                .font(.system(size: 11))
-                                .foregroundColor(Theme.bodyText)
-                                .lineLimit(1)
-                            Spacer()
-                            Button {
-                                NSWorkspace.shared.activateFileViewerSelecting([url])
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "folder.fill")
-                                    Text("Show")
-                                }
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(Theme.accent)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .padding(10)
-                        .background(Theme.accent.opacity(0.06))
-                        .cornerRadius(8)
-                    }
-
-                    Text("Captures the last \(Int(app.dashcamBufferSeconds)) seconds of audio passing through VirtualSpeaker.")
-                        .font(.system(size: 10))
-                        .foregroundColor(Theme.dimText)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                if isPlaying {
+                    app.stopSnapshotPlayback()
+                } else {
+                    app.playSnapshot(url: url)
                 }
+            } label: {
+                Image(systemName: isPlaying ? "stop.circle.fill" : "play.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundColor(isPlaying ? Theme.accent : Theme.purple.opacity(0.6))
             }
+            .buttonStyle(.plain)
         }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isPlaying ? Theme.accent.opacity(0.06) : Color.white.opacity(0.02))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isPlaying ? Theme.accent.opacity(0.3) : Theme.cardBorder, lineWidth: 1)
+        )
     }
 
     // MARK: - Settings Tab
@@ -564,6 +544,25 @@ struct ContentView: View {
                                     .foregroundColor(Theme.bodyText)
                                     .frame(width: 36, alignment: .trailing)
                             }
+                        }
+                    }
+
+                    card {
+                        VStack(alignment: .leading, spacing: 10) {
+                            cardTitle("Capture Buffer", icon: "clock.fill")
+                            HStack(spacing: 10) {
+                                Text("\(Int(app.dashcamBufferSeconds))s")
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundColor(Theme.bodyText)
+                                    .frame(width: 30, alignment: .trailing)
+                                Slider(value: $app.dashcamBufferSeconds, in: 1...30, step: 1) { editing in
+                                    if !editing { app.setDashcamBufferSeconds(app.dashcamBufferSeconds) }
+                                }
+                                .tint(Theme.accent)
+                            }
+                            Text("Rolling buffer duration for capture snapshots.")
+                                .font(.system(size: 10))
+                                .foregroundColor(Theme.dimText)
                         }
                     }
                 }

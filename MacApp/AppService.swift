@@ -62,7 +62,8 @@ class AppService: ObservableObject {
     @Published var outputDevices: [AudioDeviceInfo] = []
     @Published var dashcamBufferSeconds: Double = 5.0
     @Published var speakerPeakLevel: Float = 0.0
-    @Published var lastSnapshotURL: URL?
+    @Published var recentSnapshots: [URL] = []
+    @Published var playingSnapshot: URL?
 
     private var config: AppConfig
     private var pollTimer: Timer?
@@ -91,6 +92,7 @@ class AppService: ObservableObject {
         loadDevices()
         loadOutputDevices()
         refreshSounds()
+        refreshSnapshots()
 
         // Auto-start proxy if device was previously saved
         if let savedDevice = config.selectedDevice,
@@ -224,6 +226,12 @@ class AppService: ObservableObject {
         }
     }
 
+    static let snapshotDir: String = {
+        let dir = (NSHomeDirectory() as NSString).appendingPathComponent("VirtualMicDashcam")
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
     func saveDashcamSnapshot() -> (url: URL?, error: String?) {
         Log.info("Saving dashcam snapshot (speakerProxy=\(audio.isSpeakerProxyRunning))")
         guard audio.isSpeakerProxyRunning else {
@@ -231,22 +239,65 @@ class AppService: ObservableObject {
             return (nil, "Speaker proxy not running")
         }
 
-        let snapshotDir = (NSHomeDirectory() as NSString).appendingPathComponent("VirtualMicDashcam")
-        try? FileManager.default.createDirectory(atPath: snapshotDir, withIntermediateDirectories: true)
-
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
         let filename = "dashcam_\(formatter.string(from: Date())).m4a"
-        let url = URL(fileURLWithPath: (snapshotDir as NSString).appendingPathComponent(filename))
+        let url = URL(fileURLWithPath: (Self.snapshotDir as NSString).appendingPathComponent(filename))
 
         do {
             try audio.saveDashcamSnapshot(to: url)
-            lastSnapshotURL = url
+            refreshSnapshots()
             return (url, nil)
         } catch {
             Log.error("Dashcam snapshot failed: \(error)")
             return (nil, error.localizedDescription)
         }
+    }
+
+    func refreshSnapshots() {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(atPath: Self.snapshotDir) else {
+            recentSnapshots = []
+            return
+        }
+        let urls = files
+            .filter { $0.hasSuffix(".m4a") }
+            .map { URL(fileURLWithPath: (Self.snapshotDir as NSString).appendingPathComponent($0)) }
+            .sorted { u1, u2 in
+                let d1 = (try? fm.attributesOfItem(atPath: u1.path)[.creationDate] as? Date) ?? .distantPast
+                let d2 = (try? fm.attributesOfItem(atPath: u2.path)[.creationDate] as? Date) ?? .distantPast
+                return d1 > d2
+            }
+        recentSnapshots = Array(urls.prefix(5))
+    }
+
+    private var snapshotPlayer: AVAudioPlayer?
+
+    func playSnapshot(url: URL) {
+        stopSnapshotPlayback()
+        do {
+            snapshotPlayer = try AVAudioPlayer(contentsOf: url)
+            snapshotPlayer?.play()
+            playingSnapshot = url
+            // Poll for completion
+            DispatchQueue.global().async { [weak self] in
+                while self?.snapshotPlayer?.isPlaying == true {
+                    Thread.sleep(forTimeInterval: 0.2)
+                }
+                DispatchQueue.main.async {
+                    self?.playingSnapshot = nil
+                }
+            }
+        } catch {
+            Log.error("Snapshot playback failed: \(error)")
+            playingSnapshot = nil
+        }
+    }
+
+    func stopSnapshotPlayback() {
+        snapshotPlayer?.stop()
+        snapshotPlayer = nil
+        playingSnapshot = nil
     }
 
     // MARK: - Volume
