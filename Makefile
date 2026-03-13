@@ -22,7 +22,7 @@ DRIVER_BUNDLE = build/VirtualMic.driver
 DRIVER_BINARY = $(DRIVER_BUNDLE)/Contents/MacOS/VirtualMicDriver
 DRIVER_PLIST  = Driver/VirtualMic.driver/Contents/Info.plist
 
-GUI_SRC       = MacApp/VirtualMicGUI.swift MacApp/Log.swift MacApp/AppService.swift MacApp/AudioService.swift MacApp/ContentView.swift
+GUI_SRC       = App/VirtualMicGUI.swift App/Log.swift App/AppService.swift App/AudioService.swift App/ContentView.swift
 GUI_BUNDLE    = build/VirtualMic.app
 GUI_BINARY    = $(GUI_BUNDLE)/Contents/MacOS/VirtualMic
 GUI_BUNDLE_ID = com.virtualmicdrv.gui
@@ -81,16 +81,16 @@ $(GUI_BINARY): $(GUI_SRC) $(DRIVER_BINARY)
 	$(SWIFTC) -target arm64-apple-macos13.0 \
 	    -sdk $(shell xcrun --show-sdk-path) \
 	    -O -parse-as-library \
-	    -import-objc-header MacApp/BridgingHeader.h \
+	    -import-objc-header App/BridgingHeader.h \
 	    -framework CoreAudio \
 	    -framework AVFoundation \
 	    -framework AudioToolbox \
 	    -o $(GUI_BINARY) \
 	    $(GUI_SRC)
-	@cp MacApp/Info.plist $(GUI_BUNDLE)/Contents/Info.plist
+	@cp App/Info.plist $(GUI_BUNDLE)/Contents/Info.plist
 	@/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $(VERSION)" $(GUI_BUNDLE)/Contents/Info.plist
 	@/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $(VERSION)" $(GUI_BUNDLE)/Contents/Info.plist
-	@cp MacApp/AppIcon.icns $(GUI_BUNDLE)/Contents/Resources/AppIcon.icns
+	@cp App/AppIcon.icns $(GUI_BUNDLE)/Contents/Resources/AppIcon.icns
 	@cp -R $(DRIVER_BUNDLE) $(GUI_BUNDLE)/Contents/Resources/VirtualMic.driver
 	codesign --force --sign - --entitlements App/entitlements.plist $(GUI_BUNDLE)
 	@echo "✓ GUI app built → $(GUI_BUNDLE)"

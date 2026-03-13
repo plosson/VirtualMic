@@ -28,7 +28,7 @@ or FLAC file — it appears as a real mic input to every app on your Mac.
 | Component | Language | What it does |
 |-----------|----------|--------------|
 | `VirtualMicDriver.c` | C | Audio Server Plugin — implements the 23-function HAL vtable, reads from shared memory on the real-time audio thread |
-| `MacApp/` | Swift | GUI app — mic proxy, soundboard, audio injection, settings |
+| `App/` | Swift | GUI app — mic proxy, soundboard, audio injection, settings |
 | `SharedMemory.h` | C | Shared ring-buffer layout (included by both) |
 | `Installer/` | pkg | One-click `.pkg` installer with postinstall script |
 
@@ -94,7 +94,7 @@ before writing to the ring buffer.
 5. `GetZeroTimeStamp` advances the HAL clock by computing elapsed host ticks
    since the anchor, quantised to buffer periods.
 
-### App side (`MacApp/AudioService.swift`)
+### App side (`App/AudioService.swift`)
 
 1. Opens the same shared memory region.
 2. Captures audio from the selected real mic via a HAL AudioUnit.

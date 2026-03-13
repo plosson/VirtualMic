@@ -13,7 +13,7 @@ make uninstall
 
 ## Release
 
-1. Update version in `MacApp/Info.plist` (both `CFBundleShortVersionString` and `CFBundleVersion`)
+1. Update version in `App/Info.plist` (both `CFBundleShortVersionString` and `CFBundleVersion`)
 2. Commit the version bump
 3. Tag and push:
 
