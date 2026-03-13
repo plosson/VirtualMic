@@ -11,6 +11,10 @@ private enum Theme {
     static let purple     = Color(red: 0.36, green: 0.42, blue: 0.75)
     static let dimText    = Color(white: 0.45)
     static let bodyText   = Color(white: 0.85)
+
+    static let dbFloor    = -60.0   // silence threshold in dB
+    static let dbRange    = 60.0    // dynamic range for meters (0dB down to dbFloor)
+    static let silenceThreshold = 0.0001  // linear amplitude below which we show -inf
 }
 
 // MARK: - Main View
@@ -672,9 +676,9 @@ struct ContentView: View {
     }
 
     private func levelMeter(label: String, level: Float, color: Color) -> some View {
-        let dbValue = level > 0.0001 ? 20 * log10(level) : -60.0
-        let normalized = CGFloat(max(0, min(1, (dbValue + 60) / 60)))  // -60dB..0dB → 0..1
-        let dbText = level > 0.0001 ? String(format: "%.0f dB", dbValue) : "-inf"
+        let dbValue = level > Float(Theme.silenceThreshold) ? Double(20 * log10(level)) : Theme.dbFloor
+        let normalized = CGFloat(max(0, min(1, (dbValue - Theme.dbFloor) / Theme.dbRange)))
+        let dbText = level > Float(Theme.silenceThreshold) ? String(format: "%.0f dB", dbValue) : "-inf"
 
         return VStack(alignment: .leading, spacing: 4) {
             HStack {

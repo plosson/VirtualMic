@@ -10,6 +10,7 @@
 #include <mach/mach_time.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stddef.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -17,6 +18,8 @@
 #include <unistd.h>
 #include <math.h>
 #include <os/log.h>
+
+static os_log_t sDriverLog;
 
 // ---------------------------------------------------------------------------
 // Shared memory layout (must match App side: SharedMemory.h)
@@ -29,6 +32,8 @@
 #define VIRTUALMICDRV_NUM_CHANNELS   2
 #define VIRTUALMICDRV_BUFFER_FRAMES  512
 #define VIRTUALMICDRV_SAFETY_OFFSET  64     // frames of breathing room for producer (~1.3ms at 48kHz)
+#define VIRTUALMICDRV_MAX_LAG_MULT  3      // allow 3 buffer periods of clock drift before compression
+#define VIRTUALMICDRV_LAP_SKIP_DIV  2      // on producer lap, skip to middle of valid data (cap/2)
 
 // Ring buffer header lives at the start of the shared memory region.
 typedef struct {
@@ -40,6 +45,10 @@ typedef struct {
     uint32_t         _pad;
     float            data[];    // interleaved PCM frames follow
 } VirtualMicSHM;
+
+_Static_assert(sizeof(VirtualMicSHM) == 136, "SHM header size mismatch — must match Swift SHMHeader");
+_Static_assert(offsetof(VirtualMicSHM, readPos) == 64, "readPos offset mismatch");
+_Static_assert(offsetof(VirtualMicSHM, capacity) == 128, "capacity offset mismatch");
 
 // ---------------------------------------------------------------------------
 // Object IDs
@@ -244,7 +253,10 @@ static void SHM_OpenNamed(DeviceState* st, const char* name)
     if (newFd < 0) {
         if (st->shm) return;  // SHM doesn't exist yet, keep existing mapping
         newFd = shm_open(name, O_RDWR | O_CREAT, 0666);
-        if (newFd < 0) return;
+        if (newFd < 0) {
+            os_log_error(sDriverLog, "SHM_OpenNamed: shm_open(%{public}s) failed: %{errno}d", name, errno);
+            return;
+        }
         ftruncate(newFd, (off_t)sz);
     }
 
@@ -262,7 +274,10 @@ static void SHM_OpenNamed(DeviceState* st, const char* name)
     st->shmFd = newFd;
 
     void* m = mmap(NULL, sz, PROT_READ | PROT_WRITE, MAP_SHARED, st->shmFd, 0);
-    if (m == MAP_FAILED) { close(st->shmFd); st->shmFd = -1; return; }
+    if (m == MAP_FAILED) {
+        os_log_error(sDriverLog, "SHM_OpenNamed: mmap(%{public}s) failed: %{errno}d", name, errno);
+        close(st->shmFd); st->shmFd = -1; return;
+    }
     st->shm = (VirtualMicSHM*)m;
 
     // Ensure capacity is initialized (may have been created by driver before app)
@@ -310,14 +325,14 @@ static void SHM_Read(DeviceState* st, float* out, uint32_t numFrames)
 
     // Producer lapped us — our data is gone. Skip ahead to valid region.
     if (avail > cap) {
-        rp = wp - cap / 2;
+        rp = wp - cap / VIRTUALMICDRV_LAP_SKIP_DIV;
         avail = wp - rp;
     }
 
     if (avail == 0) { memset(out, 0, numSamples * sizeof(float)); return; }
 
     // Determine how many samples to consume.
-    uint64_t maxLag = numSamples * 3;
+    uint64_t maxLag = numSamples * VIRTUALMICDRV_MAX_LAG_MULT;
     uint64_t toConsume;
     if (avail > maxLag)
         toConsume = avail;          // overrun: drain all excess
@@ -370,6 +385,7 @@ void* VirtualMicDriverFactory(CFAllocatorRef allocator, CFUUIDRef requestedTypeU
 {
     (void)allocator;
     if (!CFEqual(requestedTypeUUID, kAudioServerPlugInTypeUUID)) return NULL;
+    sDriverLog = os_log_create("com.virtualmicdrv.driver", "audio");
     pthread_mutex_init(&gDriver.stateLock, NULL);
     mach_timebase_info(&gDriver.tbInfo);
     gDriver.refCount = 1;

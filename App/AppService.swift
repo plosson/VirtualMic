@@ -14,6 +14,8 @@ struct AppConfig: Codable {
     var injectVolume: Float?
     var selectedOutputDevice: String?
     var dashcamBufferSeconds: Double?
+    var savedInputDefaultUID: String?   // original system default before we switched to VirtualMic
+    var savedOutputDefaultUID: String?  // original system default before we switched to VirtualSpeaker
 
     static let defaultPath = NSHomeDirectory() + "/.virtualmicapp.json"
     static let documentsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!.path
@@ -73,6 +75,10 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
     var soundsDir: String { (baseDir as NSString).appendingPathComponent("Sounds") }
     var snapshotsDir: String { (baseDir as NSString).appendingPathComponent("Recordings") }
 
+    private static let pollIntervalSeconds = 0.15    // balance UI responsiveness vs CPU
+    private static let peakChangeThreshold: Float = 0.005  // 0.5% of full scale, avoids UI thrashing
+    private static let maxRecentSnapshots = 5
+
     private var config: AppConfig
     private var pollTimer: Timer?
     private var originalInputDeviceID: AudioDeviceID?
@@ -107,9 +113,35 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
         refreshSounds()
         refreshSnapshots()
 
+        // Restore defaults from a previous crash (config has UIDs that weren't cleared)
+        if let savedUID = config.savedInputDefaultUID,
+           let deviceID = audio.findDeviceByExactUID(savedUID) {
+            if audio.setSystemDefaultDevice(input: true, deviceID: deviceID) {
+                Log.info("Crash recovery: restored system default input from saved UID")
+            }
+            config.savedInputDefaultUID = nil
+        }
+        if let savedUID = config.savedOutputDefaultUID,
+           let deviceID = audio.findDeviceByExactUID(savedUID) {
+            if audio.setSystemDefaultDevice(input: false, deviceID: deviceID) {
+                Log.info("Crash recovery: restored system default output from saved UID")
+            }
+            config.savedOutputDefaultUID = nil
+        }
+        config.save()
+
         // Save original system defaults BEFORE any changes (skip if already virtual)
         originalInputDeviceID = audio.getNonVirtualDefaultDevice(input: true)
         originalOutputDeviceID = audio.getNonVirtualDefaultDevice(input: false)
+
+        // Persist UIDs so we can restore on crash recovery
+        if let id = originalInputDeviceID {
+            config.savedInputDefaultUID = audio.deviceUID(for: id)
+        }
+        if let id = originalOutputDeviceID {
+            config.savedOutputDefaultUID = audio.deviceUID(for: id)
+        }
+        config.save()
 
         // Auto-start proxies: saved device or system default
         let micName = config.selectedDevice
@@ -153,6 +185,11 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
                 Log.info("Restored system default output")
             }
         }
+
+        // Clear saved UIDs — clean shutdown means no crash recovery needed
+        config.savedInputDefaultUID = nil
+        config.savedOutputDefaultUID = nil
+        config.save()
 
         isRunning = false
         proxyRunning = false
@@ -269,7 +306,7 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
                 let d2 = (try? fm.attributesOfItem(atPath: u2.path)[.creationDate] as? Date) ?? .distantPast
                 return d1 > d2
             }
-        recentSnapshots = Array(urls.prefix(5))
+        recentSnapshots = Array(urls.prefix(Self.maxRecentSnapshots))
     }
 
     private var snapshotPlayer: AVAudioPlayer?
@@ -385,7 +422,7 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
 
     private func startPolling() {
         pollTimer?.invalidate()
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
+        pollTimer = Timer.scheduledTimer(withTimeInterval: Self.pollIntervalSeconds, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             let newMainRing = self.audio.mainRingFillPercent
             let newInjectRing = self.audio.injectRingFillPercent
@@ -397,9 +434,9 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
             if newMainRing != self.mainRingPercent { self.mainRingPercent = newMainRing }
             if newInjectRing != self.injectRingPercent { self.injectRingPercent = newInjectRing }
             if newInjectSamples != self.injectAvailableSamples { self.injectAvailableSamples = newInjectSamples }
-            if abs(newMicPeak - self.micPeakLevel) > 0.005 { self.micPeakLevel = newMicPeak }
-            if abs(newInjectPeak - self.injectPeakLevel) > 0.005 { self.injectPeakLevel = newInjectPeak }
-            if abs(newSpeakerPeak - self.speakerPeakLevel) > 0.005 { self.speakerPeakLevel = newSpeakerPeak }
+            if abs(newMicPeak - self.micPeakLevel) > Self.peakChangeThreshold { self.micPeakLevel = newMicPeak }
+            if abs(newInjectPeak - self.injectPeakLevel) > Self.peakChangeThreshold { self.injectPeakLevel = newInjectPeak }
+            if abs(newSpeakerPeak - self.speakerPeakLevel) > Self.peakChangeThreshold { self.speakerPeakLevel = newSpeakerPeak }
 
             if self.currentlyPlaying != nil && self.injectAvailableSamples == 0 {
                 self.currentlyPlaying = nil

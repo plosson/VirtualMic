@@ -921,6 +921,32 @@ class AudioService {
 
     // MARK: - System Default Device Switching
 
+    func deviceUID(for deviceID: AudioDeviceID) -> String? {
+        getAudioDeviceStringProperty(deviceID, selector: kAudioDevicePropertyDeviceUID)
+    }
+
+    func findDeviceByExactUID(_ uid: String) -> AudioDeviceID? {
+        var propAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject), &propAddr, 0, nil, &dataSize) == noErr else { return nil }
+        let count = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
+        var ids = [AudioDeviceID](repeating: 0, count: count)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &propAddr, 0, nil, &dataSize, &ids) == noErr else { return nil }
+        for devID in ids {
+            if let devUID = getAudioDeviceStringProperty(devID, selector: kAudioDevicePropertyDeviceUID),
+               devUID == uid {
+                return devID
+            }
+        }
+        return nil
+    }
+
     func findDeviceByUID(_ uidFragment: String) -> AudioDeviceID? {
         var propAddr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
