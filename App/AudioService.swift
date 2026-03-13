@@ -62,8 +62,8 @@ class SharedRingBuffer {
         let cap = UInt32(SHM_DATA_SIZE / MemoryLayout<Float>.size)
         if header.pointee.capacity == 0 {
             header.pointee.capacity = cap
-            header.pointee.writePos = 0
-            header.pointee.readPos  = 0
+            shm_store_write_pos(header, 0)
+            shm_store_read_pos(header, 0)
         }
     }
 
@@ -73,10 +73,11 @@ class SharedRingBuffer {
 
     func write(_ samples: UnsafePointer<Float>, count: Int) {
         let cap = capacity
+        let rawHeader = UnsafeMutableRawPointer(header)
         var written = 0
         while written < count {
-            let wp = header.pointee.writePos
-            let rp = header.pointee.readPos
+            let wp = shm_load_write_pos(rawHeader)
+            let rp = shm_load_read_pos(rawHeader)
             let avail = cap - Int(wp - rp)
             if avail <= 0 { sched_yield(); continue }
             let chunk = min(avail, count - written)
@@ -84,15 +85,16 @@ class SharedRingBuffer {
                 let idx = Int((wp + UInt64(i)) % UInt64(cap))
                 data[idx] = samples[written + i]
             }
-            header.pointee.writePos = wp + UInt64(chunk)
+            shm_store_write_pos(rawHeader, wp + UInt64(chunk))
             written += chunk
         }
     }
 
     func tryWrite(_ samples: UnsafePointer<Float>, count: Int) -> Int {
         let cap = capacity
-        let wp = header.pointee.writePos
-        let rp = header.pointee.readPos
+        let rawHeader = UnsafeMutableRawPointer(header)
+        let wp = shm_load_write_pos(rawHeader)
+        let rp = shm_load_read_pos(rawHeader)
         let avail = cap - Int(wp - rp)
         if avail <= 0 { return 0 }
         let ch = Int(NUM_CHANNELS)
@@ -102,7 +104,7 @@ class SharedRingBuffer {
             let idx = Int((wp + UInt64(i)) % UInt64(cap))
             data[idx] = samples[i]
         }
-        header.pointee.writePos = wp + UInt64(chunk)
+        shm_store_write_pos(rawHeader, wp + UInt64(chunk))
         return chunk
     }
 
@@ -114,8 +116,9 @@ class SharedRingBuffer {
 
     func read(into buffer: UnsafeMutablePointer<Float>, maxSamples: Int) -> Int {
         let cap = capacity
-        let wp = header.pointee.writePos
-        let rp = header.pointee.readPos
+        let rawHeader = UnsafeMutableRawPointer(header)
+        let wp = shm_load_write_pos(rawHeader)
+        let rp = shm_load_read_pos(rawHeader)
         let avail = Int(wp - rp)
         if avail <= 0 { return 0 }
         let toRead = min(avail, maxSamples)
@@ -123,22 +126,25 @@ class SharedRingBuffer {
             let idx = Int((rp + UInt64(i)) % UInt64(cap))
             buffer[i] = data[idx]
         }
-        header.pointee.readPos = rp + UInt64(toRead)
+        shm_store_read_pos(rawHeader, rp + UInt64(toRead))
         return toRead
     }
 
     func clear() {
-        header.pointee.readPos = header.pointee.writePos
+        let rawHeader = UnsafeMutableRawPointer(header)
+        shm_store_read_pos(rawHeader, shm_load_write_pos(rawHeader))
     }
 
     var fillPercent: Int {
         let cap = capacity
-        let used = Int(header.pointee.writePos - header.pointee.readPos)
+        let rawHeader = UnsafeMutableRawPointer(header)
+        let used = Int(shm_load_write_pos(rawHeader) - shm_load_read_pos(rawHeader))
         return cap > 0 ? min(100, used * 100 / cap) : 0
     }
 
     var availableSamples: Int {
-        return Int(header.pointee.writePos - header.pointee.readPos)
+        let rawHeader = UnsafeMutableRawPointer(header)
+        return Int(shm_load_write_pos(rawHeader) - shm_load_read_pos(rawHeader))
     }
 }
 
