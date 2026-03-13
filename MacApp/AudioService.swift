@@ -634,13 +634,14 @@ class AudioService {
     private(set) var proxyDeviceName: String?
 
     init() {
+        Log.info("AudioService init")
         do {
             mainRing = try SharedRingBuffer(name: SHM_NAME)
             injectRing = try SharedRingBuffer(name: SHM_INJECT_NAME)
             mainRing?.clear()
             injectRing?.clear()
         } catch {
-            print("[AudioService] Failed to init ring buffers: \(error)")
+            Log.error("Failed to init ring buffers: \(error)")
         }
     }
 
@@ -807,7 +808,9 @@ class AudioService {
 
         let rolling = RollingAudioBuffer(durationSeconds: bufferDuration, sampleRate: SAMPLE_RATE, channels: Int(NUM_CHANNELS))
         let proxy = SpeakerProxy(outputDeviceID: deviceID, speakerRing: ring, rollingBuffer: rolling)
+        Log.info("Starting speaker proxy AudioUnit (device=\(deviceID), buffer=\(bufferDuration)s)")
         try proxy.start()
+        Log.info("Speaker proxy AudioUnit started successfully")
         speakerProxy = proxy
         speakerProxyDeviceName = deviceName
     }
@@ -822,11 +825,14 @@ class AudioService {
     var speakerPeakLevel: Float { speakerProxy?.speakerPeakLevel ?? 0.0 }
 
     func saveDashcamSnapshot(to url: URL) throws {
+        Log.info("saveDashcamSnapshot: speakerProxy=\(speakerProxy != nil), url=\(url.lastPathComponent)")
         guard let rolling = speakerProxy?.rollingBuffer else {
+            Log.error("saveDashcamSnapshot: speakerProxy is nil")
             throw NSError(domain: "AudioService", code: -1,
                           userInfo: [NSLocalizedDescriptionKey: "Speaker proxy not running"])
         }
         let samples = rolling.snapshot()
+        Log.info("saveDashcamSnapshot: \(samples.count) samples captured")
         if samples.isEmpty { return }
 
         let frameCount = samples.count / Int(NUM_CHANNELS)

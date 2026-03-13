@@ -22,7 +22,7 @@ DRIVER_BUNDLE = build/VirtualMic.driver
 DRIVER_BINARY = $(DRIVER_BUNDLE)/Contents/MacOS/VirtualMicDriver
 DRIVER_PLIST  = Driver/VirtualMic.driver/Contents/Info.plist
 
-GUI_SRC       = MacApp/VirtualMicGUI.swift MacApp/AppService.swift MacApp/AudioService.swift MacApp/ContentView.swift
+GUI_SRC       = MacApp/VirtualMicGUI.swift MacApp/Log.swift MacApp/AppService.swift MacApp/AudioService.swift MacApp/ContentView.swift
 GUI_BUNDLE    = build/VirtualMic.app
 GUI_BINARY    = $(GUI_BUNDLE)/Contents/MacOS/VirtualMic
 GUI_BUNDLE_ID = com.virtualmicdrv.gui

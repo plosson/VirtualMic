@@ -86,6 +86,7 @@ class AppService: ObservableObject {
     // MARK: - Lifecycle
 
     func start() {
+        Log.info("AppService starting")
         isRunning = true
         loadDevices()
         loadOutputDevices()
@@ -100,7 +101,7 @@ class AppService: ObservableObject {
                 proxyRunning = true
                 proxyDeviceName = device.name
             } catch {
-                print("[AppService] Auto-start proxy failed: \(error)")
+                Log.error("Auto-start mic proxy failed: \(error)")
             }
         }
 
@@ -113,7 +114,7 @@ class AppService: ObservableObject {
                 speakerProxyRunning = true
                 speakerProxyDeviceName = device.name
             } catch {
-                print("[AppService] Auto-start speaker proxy failed: \(error)")
+                Log.error("Auto-start speaker proxy failed: \(error)")
             }
         }
 
@@ -188,9 +189,11 @@ class AppService: ObservableObject {
             selectedOutputDevice = device.name
             config.selectedOutputDevice = device.name
             config.save()
+            Log.info("Speaker proxy started: \(device.name) (buffer: \(dashcamBufferSeconds)s)")
         } catch {
             speakerProxyRunning = false
             speakerProxyDeviceName = nil
+            Log.error("Speaker proxy start failed: \(error)")
             throw error
         }
     }
@@ -216,13 +219,15 @@ class AppService: ObservableObject {
             } catch {
                 speakerProxyRunning = false
                 speakerProxyDeviceName = nil
-                print("[AppService] Failed to restart speaker proxy: \(error)")
+                Log.error("Failed to restart speaker proxy: \(error)")
             }
         }
     }
 
     func saveDashcamSnapshot() -> (url: URL?, error: String?) {
+        Log.info("Saving dashcam snapshot (speakerProxy=\(audio.isSpeakerProxyRunning))")
         guard audio.isSpeakerProxyRunning else {
+            Log.warn("Snapshot aborted: speaker proxy not running")
             return (nil, "Speaker proxy not running")
         }
 
@@ -239,7 +244,7 @@ class AppService: ObservableObject {
             lastSnapshotURL = url
             return (url, nil)
         } catch {
-            print("[AppService] Dashcam snapshot failed: \(error)")
+            Log.error("Dashcam snapshot failed: \(error)")
             return (nil, error.localizedDescription)
         }
     }
@@ -277,7 +282,7 @@ class AppService: ObservableObject {
             if let error = error {
                 DispatchQueue.main.async {
                     self?.currentlyPlaying = nil
-                    print("[AppService] Play error: \(error)")
+                    Log.error("Play error: \(error)")
                 }
             }
         }
