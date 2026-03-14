@@ -250,7 +250,12 @@ class VideoService: ObservableObject {
         let outputURL = URL(fileURLWithPath: (snapshotsDir as NSString).appendingPathComponent(filename))
 
         // Concatenate segments using AVMutableComposition
+        // Create ONE track for video and ONE for audio, then append all segments into them
         let composition = AVMutableComposition()
+        let compositionVideoTrack = composition.addMutableTrack(
+            withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
+        let compositionAudioTrack = composition.addMutableTrack(
+            withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
         var insertTime = CMTime.zero
 
         for segmentURL in segmentsCopy {
@@ -259,19 +264,13 @@ class VideoService: ObservableObject {
                 let duration = try await asset.load(.duration)
                 let tracks = try await asset.load(.tracks)
 
-                // Add video track
                 if let videoTrack = tracks.first(where: { $0.mediaType == .video }) {
-                    let compositionVideoTrack = composition.addMutableTrack(
-                        withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
                     try compositionVideoTrack?.insertTimeRange(
                         CMTimeRange(start: .zero, duration: duration),
                         of: videoTrack, at: insertTime)
                 }
 
-                // Add audio track if present
                 if let audioTrack = tracks.first(where: { $0.mediaType == .audio }) {
-                    let compositionAudioTrack = composition.addMutableTrack(
-                        withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
                     try compositionAudioTrack?.insertTimeRange(
                         CMTimeRange(start: .zero, duration: duration),
                         of: audioTrack, at: insertTime)
@@ -281,6 +280,11 @@ class VideoService: ObservableObject {
             } catch {
                 Log.warn("Skipping segment \(segmentURL.lastPathComponent): \(error)")
             }
+        }
+
+        // Remove empty audio track if no audio segments were added
+        if let audioTrack = compositionAudioTrack, audioTrack.segments.isEmpty {
+            composition.removeTrack(audioTrack)
         }
 
         guard CMTimeGetSeconds(insertTime) > 0 else {
