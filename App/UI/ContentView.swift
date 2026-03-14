@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 // MARK: - Theme (neo-brutalist, inspired by gifhurlant.axel.siteio.me)
 
@@ -330,6 +331,7 @@ struct ContentView: View {
     @State private var soundFilterText = ""
     @State private var recPulse = false
     @State private var cardHover: String? = nil
+    @State private var soundsDropHighlight = false
     @StateObject private var floatingHeads = FloatingHeadsState()
 
     var body: some View {
@@ -1042,7 +1044,7 @@ struct ContentView: View {
 
     private var libraryTab: some View {
         VStack(spacing: 16) {
-            // Sounds card
+            // Sounds card (drop target for audio files)
             card {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(spacing: 10) {
@@ -1080,13 +1082,13 @@ struct ContentView: View {
                         HStack {
                             Spacer()
                             VStack(spacing: 10) {
-                                Image(systemName: "music.note")
+                                Image(systemName: soundsDropHighlight ? "arrow.down.circle.fill" : "music.note")
                                     .font(.system(size: 28, weight: .bold))
-                                    .foregroundColor(Theme.dimText.opacity(0.4))
-                                Text("No sounds yet")
+                                    .foregroundColor(soundsDropHighlight ? Theme.accent : Theme.dimText.opacity(0.4))
+                                Text(soundsDropHighlight ? "Drop to add" : "No sounds yet")
                                     .font(.system(size: 14, weight: .bold))
                                     .foregroundColor(Theme.bodyText)
-                                Text("Drop audio files in your sounds folder")
+                                Text("Drag & drop audio files here")
                                     .font(.system(size: 12))
                                     .foregroundColor(Theme.dimText)
                             }
@@ -1100,7 +1102,29 @@ struct ContentView: View {
                             }
                         }
                     }
+
+                    if soundsDropHighlight && !app.sounds.isEmpty {
+                        HStack {
+                            Spacer()
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.down.circle.fill")
+                                    .font(.system(size: 12, weight: .bold))
+                                Text("Drop audio files to add")
+                                    .font(.system(size: 12, weight: .bold))
+                            }
+                            .foregroundColor(Theme.accent)
+                            .padding(.vertical, 4)
+                            Spacer()
+                        }
+                    }
                 }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.cornerR)
+                    .stroke(soundsDropHighlight ? Theme.accent : Color.clear, lineWidth: 3)
+            )
+            .onDrop(of: [.fileURL], isTargeted: $soundsDropHighlight) { providers in
+                handleSoundsDrop(providers)
             }
 
             // Recordings card
@@ -1694,6 +1718,39 @@ struct ContentView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             withAnimation(.easeIn(duration: 0.3)) { toast = nil }
         }
+    }
+
+    private func handleSoundsDrop(_ providers: [NSItemProvider]) -> Bool {
+        let audioExts: Set<String> = ["mp3", "m4a", "wav", "aiff", "flac", "aac", "opus"]
+        var handled = false
+        for provider in providers {
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                guard let data = item as? Data,
+                      let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
+                let ext = url.pathExtension.lowercased()
+                guard audioExts.contains(ext) else {
+                    DispatchQueue.main.async { self.showToast("Skipped: \(url.lastPathComponent) (not audio)") }
+                    return
+                }
+                let dest = URL(fileURLWithPath: (self.app.soundsDir as NSString).appendingPathComponent(url.lastPathComponent))
+                do {
+                    if FileManager.default.fileExists(atPath: dest.path) {
+                        try FileManager.default.removeItem(at: dest)
+                    }
+                    try FileManager.default.copyItem(at: url, to: dest)
+                    DispatchQueue.main.async {
+                        self.app.refreshSounds()
+                        self.showToast("Added: \(url.lastPathComponent)")
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        self.showToast("Failed: \(error.localizedDescription)")
+                    }
+                }
+            }
+            handled = true
+        }
+        return handled
     }
 
     private func pickBaseFolder() {
