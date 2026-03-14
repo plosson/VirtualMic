@@ -4,12 +4,16 @@ macOS virtual microphone driver (C Audio Server Plugin) + companion Swift app. P
 
 ## Build
 
+The canonical build system is `make`. An Xcode project (`Pouet.xcodeproj`) is also provided for IDE convenience (code completion, debugging, navigation) but is not used for CI or releases.
+
 ```bash
 make          # build driver + app (unsigned)
 make clean    # remove build/
 make install  # install driver locally (sudo)
 make uninstall
 ```
+
+To use Xcode: `open Pouet.xcodeproj`. The project mirrors the same sources, frameworks, and flags as the Makefile. Both build systems must stay in sync — if you add/move source files, update both `Makefile` (GUI_SRC) and `Pouet.xcodeproj/project.pbxproj`.
 
 ## Release
 
@@ -31,5 +35,5 @@ CI (.github/workflows/build.yml) will automatically: build → sign → notarize
 - Run the `code-simplifier` agent after each task to clean up.
 - No backward-compatibility shims — if something is unused, delete it.
 - Driver code (C) runs on the real-time audio thread — no allocations, no locks, no syscalls.
-- Swift app uses SwiftUI with a single-file UI (`ContentView.swift`) and service layer (`AppService.swift`).
-- Build with `make` (not Xcode). Verify the build passes before considering a task done.
+- Swift app is split into `App/UI/` (SwiftUI views) and `App/Services/` (audio, state, logic).
+- Build with `make` (not Xcode) for CI and releases. Verify the build passes before considering a task done.
