@@ -231,6 +231,88 @@ class VideoService: ObservableObject {
         }
     }
 
+    // MARK: - Save Snapshot
+
+    func saveSnapshot() async -> (url: URL?, error: String?) {
+        // Finalize current segment and grab a copy of segments on the writer queue
+        let segmentsCopy: [URL] = writerQueue.sync {
+            finalizeCurrentSegment()
+            return Array(segments)
+        }
+
+        guard !segmentsCopy.isEmpty else {
+            return (nil, "No video data captured")
+        }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let filename = "video_\(formatter.string(from: Date())).mp4"
+        let outputURL = URL(fileURLWithPath: (snapshotsDir as NSString).appendingPathComponent(filename))
+
+        // Concatenate segments using AVMutableComposition
+        let composition = AVMutableComposition()
+        var insertTime = CMTime.zero
+
+        for segmentURL in segmentsCopy {
+            let asset = AVURLAsset(url: segmentURL)
+            do {
+                let duration = try await asset.load(.duration)
+                let tracks = try await asset.load(.tracks)
+
+                // Add video track
+                if let videoTrack = tracks.first(where: { $0.mediaType == .video }) {
+                    let compositionVideoTrack = composition.addMutableTrack(
+                        withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
+                    try compositionVideoTrack?.insertTimeRange(
+                        CMTimeRange(start: .zero, duration: duration),
+                        of: videoTrack, at: insertTime)
+                }
+
+                // Add audio track if present
+                if let audioTrack = tracks.first(where: { $0.mediaType == .audio }) {
+                    let compositionAudioTrack = composition.addMutableTrack(
+                        withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+                    try compositionAudioTrack?.insertTimeRange(
+                        CMTimeRange(start: .zero, duration: duration),
+                        of: audioTrack, at: insertTime)
+                }
+
+                insertTime = CMTimeAdd(insertTime, duration)
+            } catch {
+                Log.warn("Skipping segment \(segmentURL.lastPathComponent): \(error)")
+            }
+        }
+
+        guard CMTimeGetSeconds(insertTime) > 0 else {
+            return (nil, "No valid segments to export")
+        }
+
+        // Export to MP4
+        guard let exportSession = AVAssetExportSession(
+            asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
+            return (nil, "Failed to create export session")
+        }
+        exportSession.outputURL = outputURL
+        exportSession.outputFileType = .mp4
+
+        await exportSession.export()
+
+        switch exportSession.status {
+        case .completed:
+            Log.info("Video snapshot saved: \(outputURL.lastPathComponent)")
+            await MainActor.run { refreshVideoSnapshots() }
+            return (outputURL, nil)
+        case .failed:
+            let msg = exportSession.error?.localizedDescription ?? "Unknown error"
+            Log.error("Video export failed: \(msg)")
+            return (nil, msg)
+        default:
+            return (nil, "Export cancelled")
+        }
+    }
+
+    // MARK: - Segment Management (called on writerQueue)
+
     private func startNewSegment(at time: CMTime, hasAudio: Bool) {
         let filename = "segment_\(segments.count)_\(ProcessInfo.processInfo.globallyUniqueString).mp4"
         let url = tempDir.appendingPathComponent(filename)
