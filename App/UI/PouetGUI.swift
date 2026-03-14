@@ -25,8 +25,8 @@ struct PouetGUI: App {
     var body: some Scene {
         WindowGroup {
             ContentView(app: app)
-                .frame(minWidth: 520, minHeight: 560)
-                .frame(idealWidth: 520, idealHeight: 620)
+                .frame(minWidth: 520, minHeight: 600)
+                .frame(idealWidth: 520, idealHeight: 680)
                 .onAppear { delegate.appService = app }
         }
         .windowResizability(.contentSize)
