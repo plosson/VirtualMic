@@ -672,13 +672,15 @@ struct ContentView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(isSelected ? Theme.accent.opacity(0.1) : Color.clear)
+                    .fill(isSelected ? Theme.accent.opacity(0.1) : Theme.bg)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(isSelected ? Theme.accent : Theme.border.opacity(0.15), lineWidth: isSelected ? 2 : 1)
+                    .stroke(isSelected ? Theme.accent : Theme.border.opacity(0.15), lineWidth: 1.5)
             )
         }
         .buttonStyle(.plain)
