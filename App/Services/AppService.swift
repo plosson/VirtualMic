@@ -6,6 +6,17 @@ import Foundation
 import AVFoundation
 import Combine
 
+// MARK: - Recording Item (unified audio + video)
+
+enum RecordingKind { case audio, video }
+
+struct RecordingItem: Identifiable {
+    let id: String
+    let url: URL
+    let kind: RecordingKind
+    let date: Date
+}
+
 // MARK: - Config
 
 struct AppConfig: Codable {
@@ -82,7 +93,7 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
 
     private static let pollIntervalSeconds = 0.05    // 50ms — smooth meters without excessive CPU
     private static let peakChangeThreshold: Float = 0.005  // 0.5% of full scale, avoids UI thrashing
-    private static let maxRecentSnapshots = 5
+    private static let maxRecentSnapshots = 10
 
     private var config: AppConfig
     private var pollTimer: Timer?
@@ -337,6 +348,29 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
         recentSnapshots = Array(urls.prefix(Self.maxRecentSnapshots))
     }
 
+    // MARK: - All Recordings (merged audio + video)
+
+    var allRecordings: [RecordingItem] {
+        let fm = FileManager.default
+        let audioItems = recentSnapshots.map { url -> RecordingItem in
+            let date = (try? fm.attributesOfItem(atPath: url.path)[.creationDate] as? Date) ?? .distantPast
+            return RecordingItem(id: url.absoluteString, url: url, kind: .audio, date: date)
+        }
+        let videoItems = video.recentVideoSnapshots.map { url -> RecordingItem in
+            let date = (try? fm.attributesOfItem(atPath: url.path)[.creationDate] as? Date) ?? .distantPast
+            return RecordingItem(id: url.absoluteString, url: url, kind: .video, date: date)
+        }
+        return (audioItems + videoItems)
+            .sorted { $0.date > $1.date }
+            .prefix(10)
+            .map { $0 }
+    }
+
+    func refreshAllSnapshots() {
+        refreshSnapshots()
+        video.refreshVideoSnapshots()
+    }
+
     // MARK: - Preview (local playback via speakers)
 
     private var previewPlayer: AVAudioPlayer?
@@ -452,6 +486,7 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
     var virtualMicVisible: Bool { audio.virtualMicVisible }
     var speakerShmAvailable: Bool { audio.speakerRing != nil }
     var shmAvailable: Bool { audio.mainRing != nil && audio.injectRing != nil }
+    var hasScreenRecordingPermission: Bool { CGPreflightScreenCaptureAccess() }
 
     private func startPolling() {
         pollTimer?.invalidate()
