@@ -401,7 +401,7 @@ struct ContentView: View {
                 RoundedRectangle(cornerRadius: 10)
                     .fill(isActive ? Theme.accent.opacity(0.15) : Theme.purple.opacity(0.1))
                     .frame(width: 34, height: 34)
-                Image(systemName: isActive ? "waveform" : "record.circle")
+                Image(systemName: isActive ? "waveform" : "mic.fill")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(isActive ? Theme.accent : Theme.purple)
             }
