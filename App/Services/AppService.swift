@@ -24,7 +24,8 @@ struct AppConfig: Codable {
     static let defaultBaseDir = (documentsDir as NSString).appendingPathComponent("Pouet")
 
     var soundsDir: String { (baseDir as NSString).appendingPathComponent("Sounds") }
-    var snapshotsDir: String { (baseDir as NSString).appendingPathComponent("Recordings") }
+    var audioSnapshotsDir: String { (baseDir as NSString).appendingPathComponent("Recordings/Audio") }
+    var videoSnapshotsDir: String { (baseDir as NSString).appendingPathComponent("Recordings/Video") }
 
     static func load() -> AppConfig {
         if let data = try? Data(contentsOf: URL(fileURLWithPath: defaultPath)),
@@ -76,7 +77,8 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published var previewingURL: URL?
 
     var soundsDir: String { (baseDir as NSString).appendingPathComponent("Sounds") }
-    var snapshotsDir: String { (baseDir as NSString).appendingPathComponent("Recordings") }
+    var audioSnapshotsDir: String { (baseDir as NSString).appendingPathComponent("Recordings/Audio") }
+    var videoSnapshotsDir: String { (baseDir as NSString).appendingPathComponent("Recordings/Video") }
 
     private static let pollIntervalSeconds = 0.05    // 50ms — smooth meters without excessive CPU
     private static let peakChangeThreshold: Float = 0.005  // 0.5% of full scale, avoids UI thrashing
@@ -100,13 +102,15 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
         // Video config
         video.captureAudio = config.videoCaptureAudio ?? true
         video.bufferDurationSeconds = config.videoBufferSeconds ?? 5.0
-        video.snapshotsDir = snapshotsDir
+        video.snapshotsDir = videoSnapshotsDir
 
         // Ensure directories exist
         try? FileManager.default.createDirectory(
             atPath: soundsDir, withIntermediateDirectories: true)
         try? FileManager.default.createDirectory(
-            atPath: snapshotsDir, withIntermediateDirectories: true)
+            atPath: audioSnapshotsDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(
+            atPath: videoSnapshotsDir, withIntermediateDirectories: true)
 
         start()
     }
@@ -303,8 +307,8 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
 
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        let filename = "dashcam_\(formatter.string(from: Date())).m4a"
-        let url = URL(fileURLWithPath: (snapshotsDir as NSString).appendingPathComponent(filename))
+        let filename = "pouet-audio-\(formatter.string(from: Date())).m4a"
+        let url = URL(fileURLWithPath: (audioSnapshotsDir as NSString).appendingPathComponent(filename))
 
         do {
             try audio.saveDashcamSnapshot(to: url)
@@ -318,13 +322,13 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
 
     func refreshSnapshots() {
         let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(atPath: snapshotsDir) else {
+        guard let files = try? fm.contentsOfDirectory(atPath: audioSnapshotsDir) else {
             recentSnapshots = []
             return
         }
         let urls = files
             .filter { $0.hasSuffix(".m4a") }
-            .map { URL(fileURLWithPath: (self.snapshotsDir as NSString).appendingPathComponent($0)) }
+            .map { URL(fileURLWithPath: (self.audioSnapshotsDir as NSString).appendingPathComponent($0)) }
             .sorted { u1, u2 in
                 let d1 = (try? fm.attributesOfItem(atPath: u1.path)[.creationDate] as? Date) ?? .distantPast
                 let d2 = (try? fm.attributesOfItem(atPath: u2.path)[.creationDate] as? Date) ?? .distantPast
@@ -427,8 +431,9 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
         config.baseDir = path
         config.save()
         try? FileManager.default.createDirectory(atPath: soundsDir, withIntermediateDirectories: true)
-        try? FileManager.default.createDirectory(atPath: snapshotsDir, withIntermediateDirectories: true)
-        video.snapshotsDir = snapshotsDir
+        try? FileManager.default.createDirectory(atPath: audioSnapshotsDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(atPath: videoSnapshotsDir, withIntermediateDirectories: true)
+        video.snapshotsDir = videoSnapshotsDir
         refreshSounds()
         refreshSnapshots()
         video.refreshVideoSnapshots()

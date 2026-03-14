@@ -108,7 +108,7 @@ class VideoService: ObservableObject {
             return
         }
         let urls = files
-            .filter { $0.hasPrefix("video_") && $0.hasSuffix(".mp4") }
+            .filter { $0.hasPrefix("pouet-video-") && $0.hasSuffix(".mp4") }
             .map { URL(fileURLWithPath: (self.snapshotsDir as NSString).appendingPathComponent($0)) }
             .sorted { u1, u2 in
                 let d1 = (try? fm.attributesOfItem(atPath: u1.path)[.creationDate] as? Date) ?? .distantPast
@@ -246,7 +246,7 @@ class VideoService: ObservableObject {
 
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        let filename = "video_\(formatter.string(from: Date())).mp4"
+        let filename = "pouet-video-\(formatter.string(from: Date())).mp4"
         let outputURL = URL(fileURLWithPath: (snapshotsDir as NSString).appendingPathComponent(filename))
 
         // Concatenate segments using AVMutableComposition

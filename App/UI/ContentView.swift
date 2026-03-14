@@ -754,7 +754,7 @@ struct ContentView: View {
                             NSWorkspace.shared.open(URL(fileURLWithPath: app.baseDir))
                         }
                     }
-                    Text("Sounds stored in /Sounds, recordings in /Recordings")
+                    Text("Sounds in /Sounds, audio in /Recordings/Audio, video in /Recordings/Video")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundColor(Theme.dimText)
                 }
