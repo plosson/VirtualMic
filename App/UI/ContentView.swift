@@ -284,7 +284,7 @@ private struct FloatingHeadsView: View {
             )
         }
         .allowsHitTesting(false)
-        .onAppear { startMouseTracking() }
+        .onAppear { state.startTimer(); startMouseTracking() }
         .onDisappear { state.stopTimer() }
     }
 
