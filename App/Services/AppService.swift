@@ -6,6 +6,17 @@ import Foundation
 import AVFoundation
 import Combine
 
+// MARK: - Recording Item (unified audio + video)
+
+enum RecordingKind { case audio, video }
+
+struct RecordingItem: Identifiable {
+    let id: String
+    let url: URL
+    let kind: RecordingKind
+    let date: Date
+}
+
 // MARK: - Config
 
 struct AppConfig: Codable {
@@ -14,6 +25,8 @@ struct AppConfig: Codable {
     var injectVolume: Float?
     var selectedOutputDevice: String?
     var dashcamBufferSeconds: Double?
+    var videoCaptureAudio: Bool?
+    var videoBufferSeconds: Double?
     var savedInputDefaultUID: String?   // original system default before we switched to Pouet
     var savedOutputDefaultUID: String?  // original system default before we switched to PouetSpeaker
 
@@ -22,7 +35,8 @@ struct AppConfig: Codable {
     static let defaultBaseDir = (documentsDir as NSString).appendingPathComponent("Pouet")
 
     var soundsDir: String { (baseDir as NSString).appendingPathComponent("Sounds") }
-    var snapshotsDir: String { (baseDir as NSString).appendingPathComponent("Recordings") }
+    var audioSnapshotsDir: String { (baseDir as NSString).appendingPathComponent("Recordings/Audio") }
+    var videoSnapshotsDir: String { (baseDir as NSString).appendingPathComponent("Recordings/Video") }
 
     static func load() -> AppConfig {
         if let data = try? Data(contentsOf: URL(fileURLWithPath: defaultPath)),
@@ -43,6 +57,7 @@ struct AppConfig: Codable {
 
 class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
     let audio: AudioService
+    let video = VideoService()
 
     // MARK: - Published State
 
@@ -73,11 +88,12 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published var previewingURL: URL?
 
     var soundsDir: String { (baseDir as NSString).appendingPathComponent("Sounds") }
-    var snapshotsDir: String { (baseDir as NSString).appendingPathComponent("Recordings") }
+    var audioSnapshotsDir: String { (baseDir as NSString).appendingPathComponent("Recordings/Audio") }
+    var videoSnapshotsDir: String { (baseDir as NSString).appendingPathComponent("Recordings/Video") }
 
     private static let pollIntervalSeconds = 0.05    // 50ms — smooth meters without excessive CPU
     private static let peakChangeThreshold: Float = 0.005  // 0.5% of full scale, avoids UI thrashing
-    private static let maxRecentSnapshots = 5
+    private static let maxRecentSnapshots = 10
 
     private var config: AppConfig
     private var pollTimer: Timer?
@@ -94,11 +110,18 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
         self.dashcamBufferSeconds = config.dashcamBufferSeconds ?? 5.0
         super.init()
 
+        // Video config
+        video.captureAudio = config.videoCaptureAudio ?? true
+        video.bufferDurationSeconds = config.videoBufferSeconds ?? 5.0
+        video.snapshotsDir = videoSnapshotsDir
+
         // Ensure directories exist
         try? FileManager.default.createDirectory(
             atPath: soundsDir, withIntermediateDirectories: true)
         try? FileManager.default.createDirectory(
-            atPath: snapshotsDir, withIntermediateDirectories: true)
+            atPath: audioSnapshotsDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(
+            atPath: videoSnapshotsDir, withIntermediateDirectories: true)
 
         start()
     }
@@ -173,6 +196,7 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
         stopPolling()
         audio.stopProxy()
         audio.stopSpeakerProxy()
+        Task { await video.stopCapture() }
 
         // Restore original system defaults
         if let origIn = originalInputDeviceID {
@@ -270,6 +294,21 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
         }
     }
 
+    // MARK: - Video Config
+
+    func setVideoCaptureAudio(_ enabled: Bool) {
+        video.captureAudio = enabled
+        config.videoCaptureAudio = enabled
+        config.save()
+    }
+
+    func setVideoBufferSeconds(_ seconds: Double) {
+        let clamped = max(1, min(10, seconds))
+        video.bufferDurationSeconds = clamped
+        config.videoBufferSeconds = clamped
+        config.save()
+    }
+
     func saveDashcamSnapshot() -> (url: URL?, error: String?) {
         Log.info("Saving dashcam snapshot (speakerProxy=\(audio.isSpeakerProxyRunning))")
         guard audio.isSpeakerProxyRunning else {
@@ -279,8 +318,8 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
 
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        let filename = "dashcam_\(formatter.string(from: Date())).m4a"
-        let url = URL(fileURLWithPath: (snapshotsDir as NSString).appendingPathComponent(filename))
+        let filename = "pouet-audio-\(formatter.string(from: Date())).m4a"
+        let url = URL(fileURLWithPath: (audioSnapshotsDir as NSString).appendingPathComponent(filename))
 
         do {
             try audio.saveDashcamSnapshot(to: url)
@@ -294,19 +333,42 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
 
     func refreshSnapshots() {
         let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(atPath: snapshotsDir) else {
+        guard let files = try? fm.contentsOfDirectory(atPath: audioSnapshotsDir) else {
             recentSnapshots = []
             return
         }
         let urls = files
             .filter { $0.hasSuffix(".m4a") }
-            .map { URL(fileURLWithPath: (self.snapshotsDir as NSString).appendingPathComponent($0)) }
+            .map { URL(fileURLWithPath: (self.audioSnapshotsDir as NSString).appendingPathComponent($0)) }
             .sorted { u1, u2 in
                 let d1 = (try? fm.attributesOfItem(atPath: u1.path)[.creationDate] as? Date) ?? .distantPast
                 let d2 = (try? fm.attributesOfItem(atPath: u2.path)[.creationDate] as? Date) ?? .distantPast
                 return d1 > d2
             }
         recentSnapshots = Array(urls.prefix(Self.maxRecentSnapshots))
+    }
+
+    // MARK: - All Recordings (merged audio + video)
+
+    var allRecordings: [RecordingItem] {
+        let fm = FileManager.default
+        let audioItems = recentSnapshots.map { url -> RecordingItem in
+            let date = (try? fm.attributesOfItem(atPath: url.path)[.creationDate] as? Date) ?? .distantPast
+            return RecordingItem(id: url.absoluteString, url: url, kind: .audio, date: date)
+        }
+        let videoItems = video.recentVideoSnapshots.map { url -> RecordingItem in
+            let date = (try? fm.attributesOfItem(atPath: url.path)[.creationDate] as? Date) ?? .distantPast
+            return RecordingItem(id: url.absoluteString, url: url, kind: .video, date: date)
+        }
+        return (audioItems + videoItems)
+            .sorted { $0.date > $1.date }
+            .prefix(10)
+            .map { $0 }
+    }
+
+    func refreshAllSnapshots() {
+        refreshSnapshots()
+        video.refreshVideoSnapshots()
     }
 
     // MARK: - Preview (local playback via speakers)
@@ -403,9 +465,12 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
         config.baseDir = path
         config.save()
         try? FileManager.default.createDirectory(atPath: soundsDir, withIntermediateDirectories: true)
-        try? FileManager.default.createDirectory(atPath: snapshotsDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(atPath: audioSnapshotsDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(atPath: videoSnapshotsDir, withIntermediateDirectories: true)
+        video.snapshotsDir = videoSnapshotsDir
         refreshSounds()
         refreshSnapshots()
+        video.refreshVideoSnapshots()
     }
 
     var driverInstalled: Bool {
@@ -421,6 +486,7 @@ class AppService: NSObject, ObservableObject, AVAudioPlayerDelegate {
     var virtualMicVisible: Bool { audio.virtualMicVisible }
     var speakerShmAvailable: Bool { audio.speakerRing != nil }
     var shmAvailable: Bool { audio.mainRing != nil && audio.injectRing != nil }
+    var hasScreenRecordingPermission: Bool { CGPreflightScreenCaptureAccess() }
 
     private func startPolling() {
         pollTimer?.invalidate()
